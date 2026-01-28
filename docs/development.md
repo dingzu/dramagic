@@ -3,7 +3,7 @@
 > 本文档记录 Dramagic 项目的所有开发细节，包括功能实现、技术选型、开发过程等。
 
 ## 文档更新日期
-最后更新：2026-01-28 18:07
+最后更新：2026-01-28 23:58
 
 ## 快速参考
 - **快速开始**：查看 `/QUICK_START.md` 获取快速入门指南
@@ -13,12 +13,226 @@
 - **健康检查**：http://localhost:3000/health
 
 ## 项目状态
-✅ **项目初始化已完成**（2026-01-28）
-- 所有基础设施就绪
-- 文档系统完整
-- 开发环境配置完成
-- 依赖全部安装
-- 可以开始业务开发
+✅ **密码保护功能已完成**（2026-01-28）
+- 🔐 访问密码保护
+- 🔑 登录页面和验证
+- 💾 登录状态保持
+- 🚪 退出登录功能
+
+✅ **前端画布编辑器优化完成**（2026-01-28）
+- 全新的画布式节点编辑器界面
+- 支持文本节点和视频生成节点
+- 自动轮询机制（200秒后开始，每5秒轮询）
+- 按视频长度计费（$0.1/秒视频）
+- 200秒倒计时进度条
+- 拖拽性能优化
+- 视频尺寸限制
+- 按钮状态智能显示
+- 纯白风格 UI 设计
+- Playground 测试页面
+
+---
+
+## 最新更新
+
+### 2026-01-28 23:58 - 密码保护功能
+
+#### 功能特性
+**问题：** 需要访问控制，限制平台访问权限
+**解决：**
+- 添加登录页面，用户需输入密码才能访问
+- 密码保存在后端环境变量
+- 登录状态使用 localStorage 保持
+- 添加退出登录功能
+
+#### 技术实现
+
+**1. 后端密码验证接口**
+```javascript
+// POST /api/v1/auth/verify
+app.post('/api/v1/auth/verify', (req, res) => {
+  const { password } = req.body;
+  const correctPassword = process.env.APP_PASSWORD || 'Dramagic2026';
+  
+  if (password === correctPassword) {
+    return res.json({
+      success: true,
+      data: { authenticated: true }
+    });
+  } else {
+    return res.status(401).json({
+      success: false,
+      error: '密码错误'
+    });
+  }
+});
+```
+
+**2. 前端登录组件**
+- 文件：`frontend/src/components/Login.vue`
+- 精美的登录界面（渐变背景、卡片设计）
+- 动画效果（滑入、抖动）
+- 支持回车键提交
+
+**3. 状态管理**
+- 使用 `localStorage.setItem('dramagic_authenticated', 'true')`
+- 页面加载时检查登录状态
+- 退出登录清除状态
+
+**4. 环境配置**
+```env
+# backend/.env
+APP_PASSWORD=Dramagic2026
+```
+
+#### 默认密码
+- **密码：** `Dramagic2026`
+- 可通过修改 `backend/.env` 中的 `APP_PASSWORD` 更改
+
+---
+
+## 历史更新
+
+### 2026-01-28 23:40 - 按钮状态优化
+
+### 2026-01-28 23:35 - 性能优化和 UX 改进
+
+#### 拖拽性能优化
+**问题：** 节点拖拽不跟手，卡顿
+**解决：**
+- 使用 `requestAnimationFrame` 优化渲染性能
+- 拖拽时禁用 `transition` 动画
+- 添加拖拽状态视觉反馈（半透明）
+
+#### 视频尺寸限制
+**问题：** 视频会把节点撑得很大
+**解决：**
+- 节点最大宽度限制为 400px
+- 视频容器最大高度 200px
+- 使用 `object-fit: contain` 保持比例
+
+#### 计费逻辑修正
+**问题：** 之前按生成时间计费不准确
+**解决：**
+- 改为按视频长度计费：视频时长 × $0.1
+- 4秒 = $0.40，8秒 = $0.80，12秒 = $1.20
+
+#### 倒计时进度条
+**问题：** 200秒等待时间长，用户焦虑
+**解决：**
+- 添加 200 秒倒计时显示
+- 实时更新进度条（0% → 100%）
+- 显示剩余秒数
+- 蓝色渐变主题设计
+
+---
+
+## 历史更新
+
+### 2026-01-28 20:30 - 前端重构
+
+### 前端重构 - 画布编辑器
+
+#### 功能特性
+1. **空白画布**
+   - 打开页面后展示空白画布
+   - 网格背景，纯白风格设计
+   - 提示用户从左侧添加节点
+
+2. **左侧节点库**
+   - 文本节点（📝）：用于添加文本内容
+   - Sora 2 视频节点（🎬）：AI 文生视频功能
+   - 点击即可添加到画布
+
+3. **文本节点**
+   - 支持自由拖拽定位
+   - 可编辑文本内容
+   - 选中高亮效果
+   - 可删除节点
+
+4. **Sora 2 视频生成节点**
+   - 使用 fal.ai 的 Sora 2 模型
+   - 输入描述词（prompt）
+   - 可选时长：4秒、8秒、12秒
+   - 自动轮询机制：
+     - 创建任务后等待 200 秒
+     - 然后每 5 秒轮询一次状态
+   - 实时费用计算（每秒 $0.1）
+   - 状态显示：
+     - 待生成（idle）
+     - 创建中（creating）
+     - 排队中（queued）
+     - 生成中（in_progress）
+     - 已完成（completed）
+     - 生成失败（failed）
+   - 视频渲染：生成完成后直接在节点上显示视频播放器
+
+5. **Playground 测试页面**
+   - 右上角 Tab 切换
+   - 测试 Comfly Chat API
+   - 测试任务创建和查询功能
+
+#### 组件架构
+```
+frontend/src/
+├── App.vue              # 主应用，包含顶部导航和 Tab 切换
+├── components/
+│   ├── Canvas.vue       # 画布组件，管理所有节点
+│   ├── TextNode.vue     # 文本节点组件
+│   ├── VideoNode.vue    # 视频生成节点组件
+│   ├── Sidebar.vue      # 左侧节点库
+│   ├── Playground.vue   # API 测试页面
+│   └── HelloWorld.vue   # （已废弃，保留用于参考）
+├── style.css            # 全局样式（纯白风格）
+└── main.js
+```
+
+#### 技术实现
+
+**1. 节点拖拽**
+- 使用 `mousedown` + `mousemove` + `mouseup` 事件
+- 实时更新节点位置
+- 拖拽时自动选中节点
+
+**2. 轮询机制**
+```javascript
+// 200秒后开始轮询
+setTimeout(() => {
+  startPolling(requestId, startTime)
+}, 200000)
+
+// 每5秒轮询一次
+const pollTimer = setInterval(async () => {
+  // 查询任务状态
+  // 更新节点数据
+  // 计算费用
+}, 5000)
+```
+
+**3. 费用计算**
+```javascript
+const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+const cost = (elapsedSeconds * 0.1).toFixed(2)
+```
+
+**4. 状态管理**
+- 使用 Vue 3 的 `ref` 和 `reactive` 进行状态管理
+- 父子组件通过 `emit` 通信
+- 节点数据统一在 Canvas 组件中管理
+
+#### UI 设计
+- **纯白风格**：
+  - 背景：纯白 `#ffffff`
+  - 画布网格：浅灰色网格 `rgba(0, 0, 0, 0.03)`
+  - 节点：白色卡片，浅灰色边框
+  - 选中状态：蓝色边框 `#3b82f6`
+  - 阴影：柔和的投影效果
+
+- **交互反馈**：
+  - 节点悬停效果
+  - 选中高亮
+  - 按钮状态变化
+  - 过渡动画
 
 ---
 
@@ -273,7 +487,65 @@ npm run dev   # 开发模式（自动重启）
 （待补充）
 
 ### 已完成功能
-（待补充）
+#### 2026-01-28
+
+**1. 接入 Comfly Chat `ai.comfly.chat.sora-2` 视频生成能力**
+  - 后端新增环境变量配置：
+    - `COMFLY_BASE_URL`：API 基础地址
+    - `COMFLY_API_KEY`：廉价版（逆向）Token（¥0.12/次）
+    - `COMFLY_API_KEY_PREMIUM`：官方优质版 Token（¥0.48/秒）
+    - `COMFLY_API_KEY_ORIGINAL`：Original 版 Token（¥0.876/秒）
+  - 后端新增接口：
+    - `POST /api/v1/ai/comfly/sora-2/generations`：创建视频生成任务
+      - 支持 `token_type` 参数选择使用廉价版或官方优质版
+      - 根据不同 token 类型使用不同参数：
+        - **廉价版**：使用 `aspect_ratio`, `hd`, `duration`（10/15秒）
+        - **官方版**：使用 `size`, `duration`（4秒以上）
+    - `GET /api/v1/ai/comfly/sora-2/generations/{taskId}`：查询任务状态（v2 格式）
+    - `GET /api/v1/ai/comfly/sora-2/videos/{taskId}`：查询任务状态（OpenAI v1 格式）
+  - 前端首页新增三模式控制台：
+    - **标签页切换**：廉价版（逆向）/ 官方优质版 / Original 版
+    - **廉价版表单**：
+      - 输入描述词（prompt）
+      - 画面比例（16:9/9:16/1:1）
+      - 高清开关（hd）
+      - 时长选择（10秒/15秒）
+    - **官方版表单**：
+      - 输入描述词（prompt）
+      - 分辨率选择（1280x720 / 720x1280）
+      - 时长输入（4秒以上，按秒计费）
+    - **Original 版表单**：
+      - 输入描述词（prompt）
+      - 分辨率选择（1280x720 / 720x1280）
+      - 时长输入（4秒以上，按秒计费）
+    - 一键创建任务并显示返回的 `task_id`
+    - **查询任务功能**：
+      - 支持手动选择 Token 类型（廉价版/官方版/Original版）
+      - 支持切换 API 格式（v2 / v1 OpenAI 格式）
+      - 根据 `task_id` 查询任务执行进度和视频地址
+      - 显示任务状态、进度、视频链接、错误信息等
+
+**2. 接入 fal.ai `fal-ai/sora-2/text-to-video` 视频生成能力**
+  - 后端新增依赖：`@fal-ai/client`
+  - 后端新增环境变量配置：
+    - `FAL_KEY`：fal.ai API Key
+  - 后端新增接口：
+    - `POST /api/v1/ai/fal/sora-2/text-to-video`：创建视频生成任务
+      - 支持参数：prompt, resolution, aspect_ratio, duration, model
+      - 使用异步队列方式提交任务
+    - `GET /api/v1/ai/fal/sora-2/text-to-video/{requestId}`：查询任务状态
+      - 支持查询队列状态和获取完成结果
+      - 返回视频 URL、缩略图等信息
+  - **前端界面重构**：
+    - 采用左右分栏布局（1200px 以下改为上下布局）
+    - 左侧：Comfly Chat 三模式（廉价版/官方版/Original版）
+    - 右侧：fal.ai 独立表单
+    - 每个服务独立的创建和查询功能
+  - **特点**：
+    - 支持 720p 分辨率
+    - 支持 16:9 和 9:16 画面比例
+    - 支持 4/8/12 秒时长
+    - 支持多个模型版本（sora-2, sora-2-2025-12-08, sora-2-2025-10-06）
 
 ---
 
