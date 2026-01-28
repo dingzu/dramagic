@@ -54,11 +54,16 @@
 4. **编辑权限约束**
    - 未打开项目时，节点库将禁用（需要先新建或打开项目）。
 
+5. **本地缓存与自动保存**
+   - 打开项目后会在本地保存画布快照（localStorage），用于断网/刷新恢复。
+   - 画布变更会触发**自动保存**：本地更频繁保存，后端保存会做防抖（避免频繁请求）。
+
 #### 后端接口（API）
 - **项目列表**：`GET /api/v1/projects`
 - **新建项目**：`POST /api/v1/projects`（body: `{ name, canvas_state }`）
 - **获取项目**：`GET /api/v1/projects/:id`
 - **更新项目**：`PUT /api/v1/projects/:id`（body: `{ name?, canvas_state? }`）
+- **删除项目**：`DELETE /api/v1/projects/:id`
 
 ---
 

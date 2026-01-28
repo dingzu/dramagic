@@ -116,6 +116,7 @@ app.get('/api/v1/example', (req, res) => {
  * - POST   /api/v1/projects
  * - GET    /api/v1/projects/:id
  * - PUT    /api/v1/projects/:id
+ * - DELETE /api/v1/projects/:id
  */
 app.get(`/api/${API_VERSION}/projects`, async (req, res) => {
   const ok = await ensureDbReady();
@@ -254,6 +255,34 @@ app.put(`/api/${API_VERSION}/projects/:id`, async (req, res) => {
   }
 
   return res.json({ success: true, data: rows[0], message: '项目已更新' });
+});
+
+app.delete(`/api/${API_VERSION}/projects/:id`, async (req, res) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用（请配置 DATABASE_URL）',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ success: false, error: 'id 不合法', code: 'VALIDATION_ERROR' });
+  }
+
+  const pool = getDbPool();
+  const { rows } = await pool.query(
+    `DELETE FROM projects WHERE id = $1 RETURNING id, name`,
+    [id]
+  );
+
+  if (!rows[0]) {
+    return res.status(404).json({ success: false, error: '项目不存在', code: 'NOT_FOUND' });
+  }
+
+  return res.json({ success: true, data: rows[0], message: '项目已删除' });
 });
 
 /**

@@ -4,6 +4,15 @@ import TextNode from './TextNode.vue'
 import VideoNode from './VideoNode.vue'
 import Modal from './Modal.vue'
 
+const emit = defineEmits(['changed'])
+
+const props = defineProps({
+  projectId: {
+    type: [Number, String],
+    default: null
+  }
+})
+
 const nodes = ref([])
 const nextNodeId = ref(1)
 const selectedNodeId = ref(null)
@@ -45,6 +54,7 @@ const addNode = (type) => {
   }
   nodes.value.push(node)
   selectedNodeId.value = node.id
+  emit('changed', getCanvasState())
 }
 
 // 删除节点
@@ -60,6 +70,7 @@ const deleteNode = (id) => {
     if (selectedNodeId.value === id) {
       selectedNodeId.value = null
     }
+    emit('changed', getCanvasState())
   }
 }
 
@@ -69,6 +80,7 @@ const updateNodePosition = (id, x, y) => {
   if (node) {
     node.x = x
     node.y = y
+    emit('changed', getCanvasState())
   }
 }
 
@@ -77,6 +89,7 @@ const updateNodeData = (id, data) => {
   const node = nodes.value.find(n => n.id === id)
   if (node) {
     node.data = { ...node.data, ...data }
+    emit('changed', getCanvasState())
   }
 }
 
@@ -126,6 +139,7 @@ const loadCanvasState = (state) => {
   const maxId = nodes.value.reduce((m, n) => (Number.isFinite(n.id) ? Math.max(m, n.id) : m), 0)
   nextNodeId.value = Number(state?.nextNodeId) || (maxId + 1)
   selectedNodeId.value = null
+  emit('changed', getCanvasState())
 }
 
 const clearCanvas = () => {
@@ -136,6 +150,7 @@ const clearCanvas = () => {
   nodes.value = []
   nextNodeId.value = 1
   selectedNodeId.value = null
+  emit('changed', getCanvasState())
 }
 
 // 暴露方法给父组件
@@ -156,7 +171,7 @@ defineExpose({
     
     <component
       v-for="node in nodes"
-      :key="node.id"
+      :key="`${props.projectId ?? 'no-project'}-${node.id}`"
       :is="node.type === 'text' ? TextNode : VideoNode"
       :id="node.id"
       :x="node.x"

@@ -7,10 +7,14 @@ const props = defineProps({
   currentProject: {
     type: Object,
     default: null
+  },
+  creatingProject: {
+    type: Boolean,
+    default: false
   }
 })
 
-const emit = defineEmits(['add-node', 'project-created', 'project-open', 'project-close', 'project-save'])
+const emit = defineEmits(['add-node', 'project-created', 'project-open', 'project-close', 'project-save', 'project-deleted'])
 
 const canEditCanvas = computed(() => !!props.currentProject?.id)
 
@@ -50,6 +54,7 @@ onMounted(() => {
 })
 
 const handleCreateProject = async () => {
+  if (props.creatingProject) return
   const name = window.prompt('请输入项目名称', '未命名项目')
   if (name == null) return
   emit('project-created', { name })
@@ -69,6 +74,29 @@ const handleCloseProject = () => {
 const handleSaveProject = () => {
   emit('project-save')
 }
+
+const handleDeleteProject = async (p, e) => {
+  e?.stopPropagation?.()
+  if (!p?.id) return
+  const ok = window.confirm(`确认删除项目「${p.name}」？此操作不可恢复。`)
+  if (!ok) return
+
+  loading.value = true
+  error.value = ''
+  try {
+    const resp = await fetch(`${apiBaseUrl}/api/v1/projects/${encodeURIComponent(p.id)}`, {
+      method: 'DELETE'
+    })
+    const data = await resp.json()
+    if (!resp.ok || !data.success) throw new Error(data.error || data.message || '删除失败')
+    emit('project-deleted', { id: p.id })
+    await fetchProjects()
+  } catch (err) {
+    error.value = err.message
+  } finally {
+    loading.value = false
+  }
+}
 </script>
 
 <template>
@@ -79,7 +107,9 @@ const handleSaveProject = () => {
 
     <div class="project-panel">
       <div class="project-actions">
-        <button class="action-btn primary" @click="handleCreateProject">新建项目</button>
+        <button class="action-btn primary" @click="handleCreateProject" :disabled="creatingProject">
+          {{ creatingProject ? '创建中...' : '新建项目' }}
+        </button>
         <button class="action-btn" @click="fetchProjects" :disabled="loading">刷新</button>
       </div>
 
@@ -110,7 +140,10 @@ const handleSaveProject = () => {
           :class="{ active: currentProjectId === p.id }"
           @click="handleOpenProject(p)"
         >
-          <div class="project-name">{{ p.name }}</div>
+          <div class="project-row">
+            <div class="project-name">{{ p.name }}</div>
+            <button class="delete-mini" title="删除" @click="handleDeleteProject(p, $event)">×</button>
+          </div>
           <div class="project-meta">#{{ p.id }}</div>
         </div>
       </div>
@@ -294,6 +327,35 @@ const handleSaveProject = () => {
 .project-item.active {
   border-color: #3b82f6;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
+}
+
+.project-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.delete-mini {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.delete-mini:hover {
+  background: #fee2e2;
+  color: #ef4444;
 }
 
 .project-name {

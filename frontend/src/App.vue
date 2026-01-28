@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import Login from './components/Login.vue'
 import Sidebar from './components/Sidebar.vue'
 import Canvas from './components/Canvas.vue'
@@ -11,6 +11,35 @@ const isAuthenticated = ref(false)
 const activeTab = ref('canvas')
 const canvasRef = ref(null)
 const currentProject = ref(null)
+const creatingProject = ref(false)
+
+let autosaveTimer = null
+let backendSaveTimer = null
+let dirty = false
+
+const activeProjectStorageKey = () => `dramagic_active_project_id`
+const projectCanvasStorageKey = (id) => `dramagic_project_${id}_canvas_state`
+const projectLocalUpdatedAtKey = (id) => `dramagic_project_${id}_local_updated_at`
+
+const writeLocalCache = (projectId, canvasState) => {
+  if (!projectId) return
+  try {
+    localStorage.setItem(projectCanvasStorageKey(projectId), JSON.stringify(canvasState || {}))
+    localStorage.setItem(projectLocalUpdatedAtKey(projectId), String(Date.now()))
+  } catch {
+    // ignore
+  }
+}
+
+const scheduleBackendSave = () => {
+  if (!currentProject.value?.id) return
+  if (!dirty) return
+
+  if (backendSaveTimer) clearTimeout(backendSaveTimer)
+  backendSaveTimer = setTimeout(() => {
+    handleProjectSave({ silent: true })
+  }, 2000)
+}
 
 // 检查登录状态
 onMounted(() => {
@@ -37,6 +66,7 @@ const handleAddNode = (type) => {
 
 const handleProjectCreated = async ({ name }) => {
   try {
+    creatingProject.value = true
     // 新建项目：强制空白画布
     const canvas_state = { version: 1, nodes: [], nextNodeId: 1 }
     const resp = await fetch(`${apiBaseUrl}/api/v1/projects`, {
@@ -49,9 +79,14 @@ const handleProjectCreated = async ({ name }) => {
     currentProject.value = data.data
     // 进入该项目后，画布应为空白
     canvasRef.value?.loadCanvasState?.(canvas_state)
+    localStorage.setItem(activeProjectStorageKey(), String(data.data.id))
+    writeLocalCache(data.data.id, canvas_state)
+    dirty = false
     window.alert('项目创建成功')
   } catch (e) {
     window.alert(e.message)
+  } finally {
+    creatingProject.value = false
   }
 }
 
@@ -60,14 +95,25 @@ const handleProjectOpen = async ({ id }) => {
     const resp = await fetch(`${apiBaseUrl}/api/v1/projects/${encodeURIComponent(id)}`)
     const data = await resp.json()
     if (!resp.ok || !data.success) throw new Error(data.error || data.message || '打开项目失败')
+    const serverUpdatedAt = data.data.updated_at ? Date.parse(data.data.updated_at) : 0
+    const localUpdatedAt = Number(localStorage.getItem(projectLocalUpdatedAtKey(data.data.id)) || 0)
+    const localCanvasRaw = localStorage.getItem(projectCanvasStorageKey(data.data.id))
+    const localCanvas = localCanvasRaw ? JSON.parse(localCanvasRaw) : null
+
     currentProject.value = { id: data.data.id, name: data.data.name }
-    canvasRef.value?.loadCanvasState?.(data.data.canvas_state)
+    localStorage.setItem(activeProjectStorageKey(), String(data.data.id))
+
+    // 本地缓存更“新”则优先本地（防止丢失未上传的改动）
+    const stateToLoad = localCanvas && localUpdatedAt > serverUpdatedAt ? localCanvas : data.data.canvas_state
+    canvasRef.value?.loadCanvasState?.(stateToLoad)
+    writeLocalCache(data.data.id, stateToLoad)
+    dirty = false
   } catch (e) {
     window.alert(e.message)
   }
 }
 
-const handleProjectSave = async () => {
+const handleProjectSave = async ({ silent = false } = {}) => {
   if (!currentProject.value?.id) return
   try {
     const canvas_state = canvasRef.value?.getCanvasState?.()
@@ -78,16 +124,64 @@ const handleProjectSave = async () => {
     })
     const data = await resp.json()
     if (!resp.ok || !data.success) throw new Error(data.error || data.message || '保存失败')
-    window.alert('保存成功')
+    dirty = false
+    writeLocalCache(currentProject.value.id, canvas_state)
+    if (!silent) window.alert('保存成功')
   } catch (e) {
-    window.alert(e.message)
+    if (!silent) window.alert(e.message)
   }
 }
 
 const handleProjectClose = () => {
   currentProject.value = null
+  try {
+    localStorage.removeItem(activeProjectStorageKey())
+  } catch {
+    // ignore
+  }
   canvasRef.value?.clearCanvas?.()
+  dirty = false
 }
+
+const handleProjectDeleted = ({ id }) => {
+  if (currentProject.value?.id === id) {
+    handleProjectClose()
+  }
+  try {
+    localStorage.removeItem(projectCanvasStorageKey(id))
+    localStorage.removeItem(projectLocalUpdatedAtKey(id))
+  } catch {
+    // ignore
+  }
+}
+
+const handleCanvasChanged = (state) => {
+  if (!currentProject.value?.id) return
+  dirty = true
+  writeLocalCache(currentProject.value.id, state)
+  scheduleBackendSave()
+}
+
+onMounted(() => {
+  // 自动保存：本地更频繁（10s），后端由 changed 触发防抖
+  autosaveTimer = setInterval(() => {
+    if (!currentProject.value?.id) return
+    const state = canvasRef.value?.getCanvasState?.()
+    if (!state) return
+    writeLocalCache(currentProject.value.id, state)
+  }, 10000)
+
+  // 自动恢复“上次打开项目”（优先本地缓存，避免丢失）
+  const lastId = localStorage.getItem(activeProjectStorageKey())
+  if (lastId) {
+    handleProjectOpen({ id: lastId })
+  }
+})
+
+onUnmounted(() => {
+  if (autosaveTimer) clearInterval(autosaveTimer)
+  if (backendSaveTimer) clearTimeout(backendSaveTimer)
+})
 </script>
 
 <template>
@@ -129,13 +223,19 @@ const handleProjectClose = () => {
       <template v-if="activeTab === 'canvas'">
         <Sidebar
           :current-project="currentProject"
+          :creating-project="creatingProject"
           @add-node="handleAddNode"
           @project-created="handleProjectCreated"
           @project-open="handleProjectOpen"
           @project-save="handleProjectSave"
           @project-close="handleProjectClose"
+          @project-deleted="handleProjectDeleted"
         />
-        <Canvas ref="canvasRef" />
+        <Canvas
+          ref="canvasRef"
+          :project-id="currentProject?.id ?? 'no-project'"
+          @changed="handleCanvasChanged"
+        />
       </template>
       <Playground v-else />
     </div>

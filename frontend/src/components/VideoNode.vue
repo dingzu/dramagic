@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 const props = defineProps({
   id: Number,
@@ -194,6 +194,25 @@ onMounted(() => {
     startOrResumeTimer(requestId, startTs)
   }
 })
+
+// 切换项目/加载数据时，确保本地输入框与数据源同步（避免“默认参数串上一次项目”）
+watch(
+  () => props.data?.prompt,
+  (v) => {
+    localPrompt.value = v || ''
+  }
+)
+
+// 如果加载项目后才拿到 requestId/status，也要自动恢复轮询
+watch(
+  () => [props.data?.status, props.data?.requestId, props.data?.startTime],
+  ([status, requestId, startTs]) => {
+    const shouldResume = (status === 'queued' || status === 'in_progress' || status === 'creating') && requestId
+    if (shouldResume && !timer.value) {
+      startOrResumeTimer(requestId, startTs)
+    }
+  }
+)
 
 const generate = async () => {
   if (!localPrompt.value.trim()) {
