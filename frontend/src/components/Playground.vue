@@ -3,6 +3,26 @@ import { ref, computed } from 'vue'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
+// 布局状态
+const widgets = ref(['create', 'query'])
+const draggedItem = ref(null)
+
+// Modal 状态
+const showModal = ref(false)
+const modalTitle = ref('')
+const modalContent = ref(null)
+
+const openModal = (title, content) => {
+  modalTitle.value = title
+  modalContent.value = content
+  showModal.value = true
+}
+
+const closeModal = () => {
+  showModal.value = false
+  modalContent.value = null
+}
+
 // Comfly Chat 参数
 const comflyPrompt = ref('')
 const comflyTokenType = ref('default')
@@ -11,24 +31,52 @@ const comflyAspectRatio = ref('16:9')
 
 const comflyCreating = ref(false)
 const comflyResult = ref(null)
+const comflyError = ref('')
 
 // 查询参数
 const queryTaskId = ref('')
 const queryTokenType = ref('default')
 const querying = ref(false)
 const queryResult = ref(null)
+const queryError = ref('')
 
-const errorMessage = ref('')
+// 拖拽处理
+const handleDragStart = (e, item) => {
+  draggedItem.value = item
+  e.dataTransfer.effectAllowed = 'move'
+  e.target.style.opacity = '0.5'
+}
+
+const handleDragEnd = (e) => {
+  draggedItem.value = null
+  e.target.style.opacity = '1'
+}
+
+const handleDragOver = (e) => {
+  e.preventDefault()
+  e.dataTransfer.dropEffect = 'move'
+}
+
+const handleDrop = (e, targetItem) => {
+  e.preventDefault()
+  if (draggedItem.value === targetItem) return
+  
+  const oldIndex = widgets.value.indexOf(draggedItem.value)
+  const newIndex = widgets.value.indexOf(targetItem)
+  
+  widgets.value.splice(oldIndex, 1)
+  widgets.value.splice(newIndex, 0, draggedItem.value)
+}
 
 const handleComflyCreate = async () => {
   if (!comflyPrompt.value.trim()) {
-    errorMessage.value = '请输入描述词'
+    comflyError.value = '请输入描述词'
     return
   }
 
   comflyCreating.value = true
   comflyResult.value = null
-  errorMessage.value = ''
+  comflyError.value = ''
 
   try {
     const resp = await fetch(`${apiBaseUrl}/api/v1/ai/comfly/sora-2/generations`, {
@@ -53,7 +101,7 @@ const handleComflyCreate = async () => {
     queryTaskId.value = data.data?.task_id || data.data?.id || ''
     queryTokenType.value = comflyTokenType.value
   } catch (err) {
-    errorMessage.value = err.message
+    comflyError.value = err.message
   } finally {
     comflyCreating.value = false
   }
@@ -61,13 +109,13 @@ const handleComflyCreate = async () => {
 
 const handleQuery = async () => {
   if (!queryTaskId.value.trim()) {
-    errorMessage.value = '请输入任务 ID'
+    queryError.value = '请输入任务 ID'
     return
   }
 
   querying.value = true
   queryResult.value = null
-  errorMessage.value = ''
+  queryError.value = ''
 
   try {
     const resp = await fetch(
@@ -82,7 +130,7 @@ const handleQuery = async () => {
 
     queryResult.value = data.data
   } catch (err) {
-    errorMessage.value = err.message
+    queryError.value = err.message
   } finally {
     querying.value = false
   }
@@ -96,96 +144,138 @@ const handleQuery = async () => {
       <p>测试其他还未完成的 API</p>
     </div>
 
-    <div v-if="errorMessage" class="alert error">
-      {{ errorMessage }}
+    <div class="widgets-container">
+      <div 
+        v-for="widget in widgets" 
+        :key="widget"
+        class="widget-wrapper"
+        draggable="true"
+        @dragstart="handleDragStart($event, widget)"
+        @dragend="handleDragEnd"
+        @dragover="handleDragOver"
+        @drop="handleDrop($event, widget)"
+      >
+        <!-- 创建任务卡片 -->
+        <div v-if="widget === 'create'" class="card section">
+          <div class="card-header">
+            <h3>Comfly Chat - 创建任务</h3>
+            <div class="drag-handle">⋮⋮</div>
+          </div>
+          
+          <div v-if="comflyError" class="alert error">
+            {{ comflyError }}
+          </div>
+
+          <div class="field">
+            <label>Token 类型</label>
+            <select v-model="comflyTokenType">
+              <option value="default">廉价版（¥0.12/次）</option>
+              <option value="premium">官方优质版（¥0.48/秒）</option>
+              <option value="original">Original 版（¥0.876/秒）</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>描述词</label>
+            <textarea v-model="comflyPrompt" rows="3" placeholder="描述你想要生成的视频..."></textarea>
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label>画面比例</label>
+              <select v-model="comflyAspectRatio">
+                <option value="16:9">16:9</option>
+                <option value="9:16">9:16</option>
+                <option value="1:1">1:1</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <label>时长（秒）</label>
+              <select v-model="comflyDuration">
+                <option value="10">10</option>
+                <option value="15">15</option>
+              </select>
+            </div>
+          </div>
+
+          <button class="btn primary" @click="handleComflyCreate" :disabled="comflyCreating">
+            {{ comflyCreating ? '创建中...' : '创建任务' }}
+          </button>
+
+          <div v-if="comflyResult" class="result">
+            <div class="result-header">
+              <span class="result-title">创建成功</span>
+              <button class="btn-text" @click="openModal('创建结果', comflyResult)">查看详情</button>
+            </div>
+            <div class="result-item">
+              <span class="label">任务 ID:</span>
+              <code>{{ comflyResult.task_id || comflyResult.id }}</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- 查询任务卡片 -->
+        <div v-if="widget === 'query'" class="card section">
+          <div class="card-header">
+            <h3>查询任务状态</h3>
+            <div class="drag-handle">⋮⋮</div>
+          </div>
+
+          <div v-if="queryError" class="alert error">
+            {{ queryError }}
+          </div>
+
+          <div class="field">
+            <label>Token 类型</label>
+            <select v-model="queryTokenType">
+              <option value="default">廉价版</option>
+              <option value="premium">官方优质版</option>
+              <option value="original">Original 版</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label>任务 ID</label>
+            <input v-model="queryTaskId" placeholder="输入任务 ID" />
+          </div>
+
+          <button class="btn" @click="handleQuery" :disabled="querying">
+            {{ querying ? '查询中...' : '查询状态' }}
+          </button>
+
+          <div v-if="queryResult" class="result">
+            <div class="result-header">
+              <span class="result-title">查询结果</span>
+              <button class="btn-text" @click="openModal('查询结果', queryResult)">查看详情</button>
+            </div>
+            <div class="result-item">
+              <span class="label">状态:</span>
+              <span class="status" :class="queryResult.status">{{ queryResult.status }}</span>
+            </div>
+            <div class="result-item">
+              <span class="label">进度:</span>
+              <span>{{ queryResult.progress }}%</span>
+            </div>
+            <div v-if="queryResult.url || queryResult.video_url" class="result-item">
+              <span class="label">视频:</span>
+              <a :href="queryResult.url || queryResult.video_url" target="_blank">打开视频</a>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <div class="section">
-      <h3>Comfly Chat - 创建任务</h3>
-      
-      <div class="field">
-        <label>Token 类型</label>
-        <select v-model="comflyTokenType">
-          <option value="default">廉价版（¥0.12/次）</option>
-          <option value="premium">官方优质版（¥0.48/秒）</option>
-          <option value="original">Original 版（¥0.876/秒）</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label>描述词</label>
-        <textarea v-model="comflyPrompt" rows="3" placeholder="描述你想要生成的视频..."></textarea>
-      </div>
-
-      <div class="field-row">
-        <div class="field">
-          <label>画面比例</label>
-          <select v-model="comflyAspectRatio">
-            <option value="16:9">16:9</option>
-            <option value="9:16">9:16</option>
-            <option value="1:1">1:1</option>
-          </select>
+    <!-- JSON Modal -->
+    <div v-if="showModal" class="modal-overlay" @click="closeModal">
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h3>{{ modalTitle }}</h3>
+          <button class="close-btn" @click="closeModal">×</button>
         </div>
-
-        <div class="field">
-          <label>时长（秒）</label>
-          <select v-model="comflyDuration">
-            <option value="10">10</option>
-            <option value="15">15</option>
-          </select>
+        <div class="modal-body">
+          <pre>{{ JSON.stringify(modalContent, null, 2) }}</pre>
         </div>
-      </div>
-
-      <button class="btn primary" @click="handleComflyCreate" :disabled="comflyCreating">
-        {{ comflyCreating ? '创建中...' : '创建任务' }}
-      </button>
-
-      <div v-if="comflyResult" class="result">
-        <div class="result-item">
-          <span class="label">任务 ID:</span>
-          <code>{{ comflyResult.task_id || comflyResult.id }}</code>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <h3>查询任务状态</h3>
-
-      <div class="field">
-        <label>Token 类型</label>
-        <select v-model="queryTokenType">
-          <option value="default">廉价版</option>
-          <option value="premium">官方优质版</option>
-          <option value="original">Original 版</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label>任务 ID</label>
-        <input v-model="queryTaskId" placeholder="输入任务 ID" />
-      </div>
-
-      <button class="btn" @click="handleQuery" :disabled="querying">
-        {{ querying ? '查询中...' : '查询状态' }}
-      </button>
-
-      <div v-if="queryResult" class="result">
-        <div class="result-item">
-          <span class="label">状态:</span>
-          <span class="status" :class="queryResult.status">{{ queryResult.status }}</span>
-        </div>
-        <div class="result-item">
-          <span class="label">进度:</span>
-          <span>{{ queryResult.progress }}%</span>
-        </div>
-        <div v-if="queryResult.url || queryResult.video_url" class="result-item">
-          <span class="label">视频:</span>
-          <a :href="queryResult.url || queryResult.video_url" target="_blank">打开视频</a>
-        </div>
-        <details>
-          <summary>完整响应</summary>
-          <pre>{{ JSON.stringify(queryResult, null, 2) }}</pre>
-        </details>
       </div>
     </div>
   </div>
@@ -193,78 +283,124 @@ const handleQuery = async () => {
 
 <style scoped>
 .playground {
-  padding: 32px;
-  max-width: 800px;
+  width: 100%;
+  padding: 40px;
   margin: 0 auto;
   overflow-y: auto;
   height: 100vh;
-  background: #fafafa;
+  background: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .playground-header {
-  margin-bottom: 32px;
+  margin-bottom: 40px;
+  text-align: center;
 }
 
 .playground-header h2 {
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 700;
-  color: #111827;
+  color: #1e293b;
   margin: 0 0 8px 0;
+  letter-spacing: -0.5px;
 }
 
 .playground-header p {
-  font-size: 14px;
-  color: #6b7280;
+  font-size: 16px;
+  color: #64748b;
   margin: 0;
 }
 
-.section {
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 24px;
-  margin-bottom: 24px;
+.widgets-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 800px;
+  margin: 0 auto;
+  padding-bottom: 40px;
 }
 
-.section h3 {
+.card {
+  background: white;
+  border-radius: 16px;
+  padding: 32px;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+  border: 1px solid #f1f5f9;
+  transition: transform 0.2s, box-shadow 0.2s;
+  
+  /* Enable resize */
+  resize: both;
+  overflow: auto;
+  min-width: 300px;
+  min-height: 200px;
+}
+
+.card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  cursor: grab;
+}
+
+.card-header:active {
+  cursor: grabbing;
+}
+
+.card h3 {
   font-size: 18px;
   font-weight: 600;
-  color: #111827;
-  margin: 0 0 20px 0;
+  color: #1e293b;
+  margin: 0;
+}
+
+.drag-handle {
+  color: #94a3b8;
+  font-size: 20px;
+  cursor: grab;
+  user-select: none;
 }
 
 .field {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 16px;
+  gap: 20px;
+  margin-bottom: 20px;
 }
 
 .field label {
   display: block;
   font-size: 13px;
   font-weight: 600;
-  color: #374151;
-  margin-bottom: 6px;
+  color: #475569;
+  margin-bottom: 8px;
+  letter-spacing: 0.02em;
 }
 
 input, textarea, select {
   width: 100%;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 16px;
   font-size: 14px;
   font-family: inherit;
   outline: none;
-  transition: border-color 0.2s;
+  background: #fff;
+  transition: all 0.2s;
+  color: #334155;
 }
 
 input:focus, textarea:focus, select:focus {
   border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 textarea {
@@ -273,11 +409,11 @@ textarea {
 
 .btn {
   width: 100%;
-  padding: 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
   background: white;
-  color: #374151;
+  color: #475569;
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -285,68 +421,106 @@ textarea {
 }
 
 .btn:hover:not(:disabled) {
-  background: #f9fafb;
-  border-color: #9ca3af;
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  color: #334155;
 }
 
 .btn.primary {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  background: #3b82f6;
   color: white;
   border: none;
+  box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
 }
 
 .btn.primary:hover:not(:disabled) {
+  background: #2563eb;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  box-shadow: 0 6px 8px -1px rgba(59, 130, 246, 0.4);
 }
 
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .alert {
   padding: 12px 16px;
   border-radius: 8px;
-  margin-bottom: 20px;
-  font-size: 14px;
+  margin-bottom: 24px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
 }
 
 .alert.error {
-  background: #fee2e2;
-  border: 1px solid #fecaca;
-  color: #dc2626;
+  background: #fef2f2;
+  border: 1px solid #fee2e2;
+  color: #ef4444;
 }
 
 .result {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid #e5e7eb;
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid #f1f5f9;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.result-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.btn-text {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+}
+
+.btn-text:hover {
+  text-decoration: underline;
 }
 
 .result-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   font-size: 14px;
+  color: #334155;
 }
 
 .result-item .label {
-  font-weight: 600;
-  color: #6b7280;
+  font-weight: 500;
+  color: #64748b;
+  width: 60px;
 }
 
 .result-item code {
-  background: #f3f4f6;
+  background: #f1f5f9;
   padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #475569;
+  font-family: 'SF Mono', 'Roboto Mono', Menlo, monospace;
 }
 
 .result-item a {
   color: #3b82f6;
   text-decoration: none;
+  font-weight: 500;
 }
 
 .result-item a:hover {
@@ -354,21 +528,21 @@ textarea {
 }
 
 .status {
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 4px 10px;
+  border-radius: 20px;
   font-size: 12px;
   font-weight: 600;
 }
 
 .status.completed {
-  background: #d1fae5;
-  color: #065f46;
+  background: #dcfce7;
+  color: #166534;
 }
 
 .status.queued,
 .status.in_progress {
-  background: #fef3c7;
-  color: #92400e;
+  background: #fef9c3;
+  color: #854d0e;
 }
 
 .status.failed {
@@ -376,24 +550,80 @@ textarea {
   color: #991b1b;
 }
 
-details {
-  margin-top: 16px;
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
 }
 
-details summary {
-  cursor: pointer;
-  font-size: 13px;
-  color: #6b7280;
+.modal-content {
+  background: white;
+  border-radius: 16px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  animation: modalIn 0.2s ease-out;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.modal-header {
+  padding: 20px 24px;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
   font-weight: 600;
+  color: #1e293b;
 }
 
-details pre {
-  margin-top: 8px;
-  background: #f9fafb;
-  padding: 12px;
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.close-btn:hover {
+  color: #64748b;
+}
+
+.modal-body {
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.modal-body pre {
+  margin: 0;
+  background: #f8fafc;
+  padding: 16px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 13px;
   overflow-x: auto;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e2e8f0;
+  color: #334155;
 }
 </style>

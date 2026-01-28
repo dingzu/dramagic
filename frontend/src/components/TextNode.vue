@@ -70,7 +70,6 @@ const handleDelete = () => {
         @input="updateText"
         @click.stop
         placeholder="输入文本..."
-        rows="4"
       ></textarea>
     </div>
   </div>
@@ -80,22 +79,30 @@ const handleDelete = () => {
 .node {
   position: absolute;
   background: white;
-  border: 2px solid #e5e7eb;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   min-width: 280px;
-  cursor: move;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  min-height: 160px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  /* Enable resize */
+  resize: both;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .node.dragging {
   transition: none;
   opacity: 0.9;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  z-index: 10;
 }
 
 .node.selected {
   border-color: #3b82f6;
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1), 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 
 .node-header {
@@ -103,32 +110,37 @@ const handleDelete = () => {
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  border-bottom: 1px solid #f3f4f6;
-  background: #fafafa;
-  border-radius: 10px 10px 0 0;
+  border-bottom: 1px solid #f1f5f9;
+  background: white;
   user-select: none;
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.node-header:active {
+  cursor: grabbing;
 }
 
 .node-icon {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .node-title {
   flex: 1;
   font-size: 14px;
   font-weight: 600;
-  color: #374151;
+  color: #1e293b;
 }
 
 .delete-btn {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: none;
-  background: #ef4444;
-  color: white;
-  border-radius: 50%;
+  background: #f1f5f9;
+  color: #94a3b8;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -137,31 +149,33 @@ const handleDelete = () => {
 }
 
 .delete-btn:hover {
-  background: #dc2626;
-  transform: scale(1.1);
+  background: #fee2e2;
+  color: #ef4444;
 }
 
 .node-content {
   padding: 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: white;
 }
 
 textarea {
   width: 100%;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 12px;
+  flex: 1;
+  border: none;
+  padding: 0;
   font-size: 14px;
   font-family: inherit;
   resize: none;
   outline: none;
-  transition: border-color 0.2s;
-}
-
-textarea:focus {
-  border-color: #3b82f6;
+  background: transparent;
+  color: #334155;
+  line-height: 1.5;
 }
 
 textarea::placeholder {
-  color: #9ca3af;
+  color: #94a3b8;
 }
 </style>

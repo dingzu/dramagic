@@ -2,10 +2,27 @@
 import { ref, computed } from 'vue'
 import TextNode from './TextNode.vue'
 import VideoNode from './VideoNode.vue'
+import Modal from './Modal.vue'
 
 const nodes = ref([])
 const nextNodeId = ref(1)
 const selectedNodeId = ref(null)
+
+// Modal 状态
+const showModal = ref(false)
+const modalTitle = ref('')
+const modalContent = ref(null)
+
+const openModal = (title, content) => {
+  modalTitle.value = title
+  modalContent.value = content
+  showModal.value = true
+}
+
+const closeModal = () => {
+  showModal.value = false
+  modalContent.value = null
+}
 
 // 添加节点
 const addNode = (type) => {
@@ -22,7 +39,8 @@ const addNode = (type) => {
       pollTimer: null,
       startTime: null,
       cost: 0,
-      duration: 4
+      duration: 4,
+      resultData: null // 存储原始 API 返回
     }
   }
   nodes.value.push(node)
@@ -67,6 +85,11 @@ const selectNode = (id) => {
   selectedNodeId.value = id
 }
 
+// 处理查看详情
+const handleShowDetails = (data) => {
+  openModal('API 响应详情', data)
+}
+
 // 暴露方法给父组件
 defineExpose({
   addNode
@@ -76,7 +99,7 @@ defineExpose({
 <template>
   <div class="canvas" @click="selectedNodeId = null">
     <div v-if="nodes.length === 0" class="empty-state">
-      <div class="empty-icon">📝</div>
+      <div class="empty-icon">✨</div>
       <div class="empty-text">从左侧添加节点开始创作</div>
     </div>
     
@@ -93,7 +116,15 @@ defineExpose({
       @update:data="updateNodeData"
       @select="selectNode"
       @delete="deleteNode"
+      @show-details="handleShowDetails"
       @click.stop
+    />
+
+    <Modal 
+      :show="showModal" 
+      :title="modalTitle" 
+      :content="modalContent" 
+      @close="closeModal" 
     />
   </div>
 </template>
@@ -103,11 +134,10 @@ defineExpose({
   position: relative;
   width: 100%;
   height: 100%;
-  background: #ffffff;
-  background-image: 
-    linear-gradient(rgba(0, 0, 0, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.03) 1px, transparent 1px);
-  background-size: 20px 20px;
+  background-color: #f8fafc;
+  /* 硅谷风格点阵背景 */
+  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+  background-size: 24px 24px;
   overflow: hidden;
 }
 
@@ -117,17 +147,19 @@ defineExpose({
   left: 50%;
   transform: translate(-50%, -50%);
   text-align: center;
-  color: #999;
+  color: #64748b;
+  pointer-events: none;
 }
 
 .empty-icon {
-  font-size: 64px;
+  font-size: 48px;
   margin-bottom: 16px;
-  opacity: 0.5;
+  opacity: 0.8;
 }
 
 .empty-text {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 500;
+  letter-spacing: -0.01em;
 }
 </style>

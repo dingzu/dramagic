@@ -9,15 +9,16 @@ const props = defineProps({
   selected: Boolean
 })
 
-const emit = defineEmits(['update:position', 'update:data', 'select', 'delete'])
+const emit = defineEmits(['update:position', 'update:data', 'select', 'delete', 'show-details'])
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
+const elapsedSeconds = ref(0)
+const startTime = ref(0)
+const timer = ref(null)
+const localPrompt = ref(props.data.prompt || '')
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
-const localPrompt = ref(props.data.prompt || '')
-const countdown = ref(0)
-const countdownTimer = ref(null)
 
 const statusText = computed(() => {
   switch (props.data.status) {
@@ -37,7 +38,7 @@ const statusColor = computed(() => {
     case 'failed': return '#ef4444'
     case 'queued':
     case 'in_progress': return '#f59e0b'
-    default: return '#6b7280'
+    default: return '#64748b'
   }
 })
 
@@ -50,10 +51,18 @@ const cost = computed(() => {
   return (duration.value * 0.1).toFixed(2)
 })
 
+// 倒计时显示文本
+const countdownDisplay = computed(() => {
+  const remaining = 200 - elapsedSeconds.value
+  if (remaining >= 0) return remaining
+  return `+${Math.abs(remaining)}`
+})
+
 // 倒计时进度百分比
 const countdownProgress = computed(() => {
-  if (countdown.value <= 0) return 100
-  return ((200 - countdown.value) / 200 * 100).toFixed(1)
+  const remaining = 200 - elapsedSeconds.value
+  if (remaining < 0) return 100
+  return ((200 - remaining) / 200 * 100).toFixed(1)
 })
 
 // 按钮文本
@@ -85,11 +94,8 @@ const isButtonDisabled = computed(() => {
 
 // 清理定时器
 onUnmounted(() => {
-  if (countdownTimer.value) {
-    clearInterval(countdownTimer.value)
-  }
-  if (props.data.pollTimer) {
-    clearInterval(props.data.pollTimer)
+  if (timer.value) {
+    clearInterval(timer.value)
   }
 })
 
@@ -125,11 +131,8 @@ const startDrag = (e) => {
 
 const handleDelete = () => {
   // 清理定时器
-  if (props.data.pollTimer) {
-    clearInterval(props.data.pollTimer)
-  }
-  if (countdownTimer.value) {
-    clearInterval(countdownTimer.value)
+  if (timer.value) {
+    clearInterval(timer.value)
   }
   emit('delete', props.id)
 }
@@ -146,22 +149,21 @@ const generate = async () => {
   }
 
   // 清理之前的定时器
-  if (countdownTimer.value) {
-    clearInterval(countdownTimer.value)
-    countdownTimer.value = null
-  }
-  if (props.data.pollTimer) {
-    clearInterval(props.data.pollTimer)
+  if (timer.value) {
+    clearInterval(timer.value)
+    timer.value = null
   }
   
   // 重置状态
-  countdown.value = 0
+  elapsedSeconds.value = 0
+  startTime.value = 0
   
   emit('update:data', props.id, { 
     status: 'creating',
     videoUrl: null,
     requestId: null,
-    pollTimer: null
+    error: '', // 明确清除错误
+    resultData: null // 清除旧的详情数据
   })
 
   try {
@@ -187,65 +189,67 @@ const generate = async () => {
 
     emit('update:data', props.id, { 
       status: 'queued',
-      requestId
+      requestId,
+      resultData: data // 保存创建结果
     })
 
-    // 开始200秒倒计时
-    countdown.value = 200
-    countdownTimer.value = setInterval(() => {
-      countdown.value--
-      if (countdown.value <= 0) {
-        clearInterval(countdownTimer.value)
-        countdownTimer.value = null
+    // 开始计时
+    startTime.value = Date.now()
+    timer.value = setInterval(() => {
+      const now = Date.now()
+      elapsedSeconds.value = Math.floor((now - startTime.value) / 1000)
+      
+      const es = elapsedSeconds.value
+      // 轮询策略: 5s, 10s, 15s... 加快轮询频率以获得更好体验
+      if (es % 5 === 0) {
+        pollStatus(requestId)
       }
     }, 1000)
-
-    // 200秒后开始轮询，每5秒一次
-    setTimeout(() => {
-      startPolling(requestId)
-    }, 200000) // 200秒 = 200000毫秒
 
   } catch (err) {
     emit('update:data', props.id, { 
       status: 'failed',
-      error: err.message
+      error: err.message,
+      resultData: { error: err.message }
     })
   }
 }
 
-const startPolling = (requestId) => {
-  const pollTimer = setInterval(async () => {
-    try {
-      const resp = await fetch(`${apiBaseUrl}/api/v1/ai/fal/sora-2/text-to-video/${requestId}`)
-      const data = await resp.json()
+const pollStatus = async (requestId) => {
+  try {
+    const resp = await fetch(`${apiBaseUrl}/api/v1/ai/fal/sora-2/text-to-video/${requestId}`)
+    const data = await resp.json()
 
-      if (!resp.ok || !data.success) {
-        throw new Error(data.error || '查询失败')
-      }
-
-      const status = data.data?.status
-      const videoUrl = data.data?.video?.url
-
-      emit('update:data', props.id, { 
-        status,
-        videoUrl: videoUrl || null
-      })
-
-      if (status === 'completed' || status === 'failed') {
-        clearInterval(pollTimer)
-        emit('update:data', props.id, { pollTimer: null })
-      }
-    } catch (err) {
-      clearInterval(pollTimer)
-      emit('update:data', props.id, { 
-        status: 'failed',
-        error: err.message,
-        pollTimer: null
-      })
+    if (!resp.ok || !data.success) {
+      throw new Error(data.error || '查询失败')
     }
-  }, 5000) // 每5秒轮询一次
 
-  emit('update:data', props.id, { pollTimer })
+    const status = data.data?.status
+    const videoUrl = data.data?.video?.url
+
+    emit('update:data', props.id, { 
+      status,
+      videoUrl: videoUrl || null,
+      resultData: data // 更新状态详情
+    })
+
+    if (status === 'completed' || status === 'failed') {
+      if (timer.value) {
+        clearInterval(timer.value)
+        timer.value = null
+      }
+    }
+  } catch (err) {
+    if (timer.value) {
+      clearInterval(timer.value)
+      timer.value = null
+    }
+    emit('update:data', props.id, { 
+      status: 'failed',
+      error: err.message,
+      resultData: { error: err.message }
+    })
+  }
 }
 </script>
 
@@ -301,14 +305,15 @@ const startPolling = (requestId) => {
       <div class="status-bar">
         <div class="status-indicator" :style="{ background: statusColor }"></div>
         <span class="status-text">{{ statusText }}</span>
+        <button v-if="data.resultData" class="detail-btn" @click.stop="$emit('show-details', data.resultData)">详情</button>
         <span class="cost-text">${{ cost }}</span>
       </div>
 
       <!-- 倒计时进度条 -->
-      <div v-if="countdown > 0" class="countdown-container">
+      <div v-if="data.status !== 'idle' && data.status !== 'completed' && data.status !== 'failed'" class="countdown-container">
         <div class="countdown-header">
-          <span class="countdown-label">等待开始轮询</span>
-          <span class="countdown-time">{{ countdown }}秒</span>
+          <span class="countdown-label">正在生成</span>
+          <span class="countdown-time">{{ countdownDisplay }}s</span>
         </div>
         <div class="progress-bar">
           <div class="progress-fill" :style="{ width: countdownProgress + '%' }"></div>
@@ -330,23 +335,30 @@ const startPolling = (requestId) => {
 .node {
   position: absolute;
   background: white;
-  border: 2px solid #e5e7eb;
+  border: 1px solid #e2e8f0;
   border-radius: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   min-width: 320px;
-  max-width: 400px;
-  cursor: move;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  min-height: 200px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  
+  /* Enable resize */
+  resize: both;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .node.dragging {
   transition: none;
   opacity: 0.9;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  z-index: 10;
 }
 
 .node.selected {
   border-color: #3b82f6;
-  box-shadow: 0 8px 24px rgba(59, 130, 246, 0.25);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1), 0 4px 6px -1px rgba(0, 0, 0, 0.05);
 }
 
 .node-header {
@@ -354,32 +366,37 @@ const startPolling = (requestId) => {
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
-  border-bottom: 1px solid #f3f4f6;
-  background: #fafafa;
-  border-radius: 10px 10px 0 0;
+  border-bottom: 1px solid #f1f5f9;
+  background: white;
   user-select: none;
+  cursor: grab;
+  flex-shrink: 0;
+}
+
+.node-header:active {
+  cursor: grabbing;
 }
 
 .node-icon {
-  font-size: 18px;
+  font-size: 16px;
 }
 
 .node-title {
   flex: 1;
   font-size: 14px;
   font-weight: 600;
-  color: #374151;
+  color: #1e293b;
 }
 
 .delete-btn {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   border: none;
-  background: #ef4444;
-  color: white;
-  border-radius: 50%;
+  background: #f1f5f9;
+  color: #94a3b8;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
   display: flex;
   align-items: center;
@@ -388,84 +405,79 @@ const startPolling = (requestId) => {
 }
 
 .delete-btn:hover {
-  background: #dc2626;
-  transform: scale(1.1);
+  background: #fee2e2;
+  color: #ef4444;
 }
 
 .node-content {
   padding: 16px;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .field {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .field label {
   display: block;
   font-size: 12px;
   font-weight: 600;
-  color: #6b7280;
+  color: #64748b;
   margin-bottom: 6px;
 }
 
 textarea, select {
   width: 100%;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
-  padding: 10px;
-  font-size: 14px;
+  padding: 8px 12px;
+  font-size: 13px;
   font-family: inherit;
   outline: none;
-  transition: border-color 0.2s;
-  background: white;
+  transition: all 0.2s;
+  background: #f8fafc;
+  color: #334155;
 }
 
 textarea {
-  resize: none;
+  resize: vertical;
+  min-height: 60px;
 }
 
 textarea:focus, select:focus {
   border-color: #3b82f6;
-}
-
-textarea:disabled, select:disabled {
-  background: #f9fafb;
-  cursor: not-allowed;
+  background: white;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
 .generate-btn {
   width: 100%;
-  padding: 12px;
+  padding: 10px;
   border: none;
   border-radius: 8px;
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  background: #3b82f6;
   color: white;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .generate-btn.btn-success {
-  background: linear-gradient(135deg, #10b981, #059669);
+  background: #10b981;
 }
 
 .generate-btn.btn-warning {
-  background: linear-gradient(135deg, #f59e0b, #d97706);
+  background: #f59e0b;
 }
 
 .generate-btn:hover:not(:disabled) {
+  opacity: 0.9;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-}
-
-.generate-btn.btn-success:hover:not(:disabled) {
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
-}
-
-.generate-btn.btn-warning:hover:not(:disabled) {
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
 }
 
 .generate-btn:disabled {
@@ -478,35 +490,51 @@ textarea:disabled, select:disabled {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #f9fafb;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
   border-radius: 8px;
   margin-bottom: 12px;
 }
 
 .status-indicator {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
 }
 
 .status-text {
   flex: 1;
-  font-size: 13px;
-  color: #374151;
+  font-size: 12px;
+  color: #475569;
   font-weight: 500;
 }
 
+.detail-btn {
+  font-size: 12px;
+  color: #64748b;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0 4px;
+}
+
+.detail-btn:hover {
+  color: #3b82f6;
+}
+
 .cost-text {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
   color: #10b981;
 }
 
 .video-preview {
   border-radius: 8px;
   overflow: hidden;
-  background: #000;
-  max-height: 200px;
+  background: #0f172a;
+  flex: 1;
+  min-height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -514,8 +542,8 @@ textarea:disabled, select:disabled {
 
 .video-preview video {
   width: 100%;
-  max-height: 200px;
-  display: block;
+  height: 100%;
+  max-height: 300px;
   object-fit: contain;
 }
 
@@ -531,7 +559,7 @@ textarea:disabled, select:disabled {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .countdown-label {
@@ -541,32 +569,34 @@ textarea:disabled, select:disabled {
 }
 
 .countdown-time {
-  font-size: 14px;
+  font-size: 13px;
   color: #0c4a6e;
   font-weight: 700;
 }
 
 .progress-bar {
   width: 100%;
-  height: 6px;
+  height: 4px;
   background: #e0f2fe;
-  border-radius: 3px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #38bdf8, #0ea5e9);
-  border-radius: 3px;
+  background: #38bdf8;
+  border-radius: 2px;
   transition: width 0.3s ease;
 }
 
 .error-message {
+  margin-top: 12px;
   padding: 8px 12px;
-  background: #fee2e2;
-  border: 1px solid #fecaca;
+  background: #fef2f2;
+  border: 1px solid #fee2e2;
   border-radius: 8px;
-  color: #dc2626;
+  color: #ef4444;
   font-size: 12px;
+  word-break: break-all;
 }
 </style>
