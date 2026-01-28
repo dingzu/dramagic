@@ -3,7 +3,7 @@
 > 本文档记录 Dramagic 项目的所有开发细节，包括功能实现、技术选型、开发过程等。
 
 ## 文档更新日期
-最后更新：2026-01-28 23:58
+最后更新：2026-01-29
 
 ## 快速参考
 - **快速开始**：查看 `/QUICK_START.md` 获取快速入门指南
@@ -35,6 +35,76 @@
 
 ## 最新更新
 
+### 2026-01-29 - 项目管理功能（Project）与数据库接入（Railway Postgres）
+
+#### 功能特性
+1. **项目列表**
+   - 左侧栏新增「项目」面板，可查看所有项目（按最近更新时间排序）。
+   - 支持点击项目打开，并将项目中保存的画布状态加载回画布。
+
+2. **新建 / 保存 / 关闭项目**
+   - **新建项目**：创建后进入**空白画布**（避免把临时画布误保存进新项目）。
+   - **保存项目**：手动保存当前画布状态到当前项目（写入数据库）。
+   - **关闭项目**：关闭当前项目并清空画布（仅前端状态，不删除数据库数据）。
+
+3. **画布状态持久化**
+   - 后端将画布状态以 `JSONB` 存储在 `projects.canvas_state` 中，便于后续扩展与版本兼容。
+   - **未完成任务恢复**：如果视频节点在保存时仍处于 `queued/in_progress` 且有 `requestId`，重新打开项目后会自动继续轮询直到完成。
+
+4. **编辑权限约束**
+   - 未打开项目时，节点库将禁用（需要先新建或打开项目）。
+
+#### 后端接口（API）
+- **项目列表**：`GET /api/v1/projects`
+- **新建项目**：`POST /api/v1/projects`（body: `{ name, canvas_state }`）
+- **获取项目**：`GET /api/v1/projects/:id`
+- **更新项目**：`PUT /api/v1/projects/:id`（body: `{ name?, canvas_state? }`）
+
+---
+
+## 数据库（Postgres）配置与连接指南
+
+### （1）引导：在 Railway 上安装数据库（Postgres）
+1. 进入 Railway 控制台，打开你的 **Project**。
+2. 点击 **New** → 选择 **Database** → 选择 **PostgreSQL** 创建数据库实例。
+3. 创建完成后，进入该 Postgres 服务页，找到 **Connect / Variables**：
+   - 复制 `DATABASE_URL`（形如 `postgresql://...`）。
+
+> 说明：Railway Postgres 通常要求 TLS 连接；本项目后端默认启用 SSL（无需额外配置）。
+
+### （2）在本地连接数据库
+你有两种推荐方式：
+
+#### A. 本地直接连接 Railway Postgres（推荐，最省事）
+1. 在 `backend/.env` 中配置：
+   - `DATABASE_URL=<Railway 提供的 DATABASE_URL>`
+2. 启动后端：
+   - `cd backend && npm run dev`
+3. 可用 `psql` 验证连接（可选）：
+   - `psql "$DATABASE_URL"`
+
+#### B. 使用本地 Postgres（离线/本地更快）
+1. 安装并启动本地 Postgres（略）。
+2. 在 `backend/.env` 中配置（示例）：
+   - `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/dramagic`
+   - `PGSSLMODE=disable`
+3. 启动后端：
+   - `cd backend && npm run dev`
+
+### （3）在 Railway 上连接数据库（让线上后端读写）
+1. 在 Railway 的 **后端服务**（Node/Express）里打开 **Variables**。
+2. 新增或覆盖环境变量：
+   - `DATABASE_URL=<Railway Postgres 的 DATABASE_URL>`
+3. 触发一次 redeploy（Railway 通常会自动重启服务）。
+
+#### 数据表说明
+后端启动时会自动确保表存在：
+- `projects`
+  - `id`：自增主键
+  - `name`：项目名称
+  - `canvas_state`：画布状态（JSONB）
+  - `created_at / updated_at`：时间戳
+
 ### 2026-01-29 - 无限画布与卡片体验优化
 
 #### 功能特性
@@ -45,6 +115,9 @@
 2. **卡片交互增强**
    - **自由缩放**：VideoNode 和 TextNode 支持 `resize: both`，内容自适应布局。
    - **样式优化**：更细腻的边框（1px #e2e8f0）、圆角（12px）和柔和阴影。
+   - **性能优化**：
+     - 缩放（resize）时通过 `contain: layout paint` / `will-change` 降低重排重绘范围。
+     - 拖拽移动时改用 `transform: translate3d(...)` 代替 `left/top`，并将拖拽更新节流为“每帧最多一次”，显著减少卡顿。
    - **详情查看**：新增“详情”按钮，点击可在弹窗（Modal）中查看完整的 API JSON 响应，方便调试。
 
 3. **问题修复**

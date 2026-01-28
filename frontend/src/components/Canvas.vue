@@ -90,9 +90,60 @@ const handleShowDetails = (data) => {
   openModal('API 响应详情', data)
 }
 
+function sanitizeNodeForSave(node) {
+  const data = { ...(node.data || {}) }
+  // 运行态字段不入库
+  if ('pollTimer' in data) data.pollTimer = null
+  return {
+    id: node.id,
+    type: node.type,
+    x: node.x,
+    y: node.y,
+    data
+  }
+}
+
+// 导出画布状态（可持久化）
+const getCanvasState = () => {
+  return {
+    version: 1,
+    nextNodeId: nextNodeId.value,
+    nodes: nodes.value.map(sanitizeNodeForSave)
+  }
+}
+
+// 加载画布状态
+const loadCanvasState = (state) => {
+  const incomingNodes = Array.isArray(state?.nodes) ? state.nodes : []
+  nodes.value = incomingNodes.map((n) => ({
+    id: Number(n.id),
+    type: n.type,
+    x: Number(n.x) || 0,
+    y: Number(n.y) || 0,
+    data: { ...(n.data || {}) }
+  }))
+
+  const maxId = nodes.value.reduce((m, n) => (Number.isFinite(n.id) ? Math.max(m, n.id) : m), 0)
+  nextNodeId.value = Number(state?.nextNodeId) || (maxId + 1)
+  selectedNodeId.value = null
+}
+
+const clearCanvas = () => {
+  // 清理旧节点的定时器
+  for (const n of nodes.value) {
+    if (n?.data?.pollTimer) clearInterval(n.data.pollTimer)
+  }
+  nodes.value = []
+  nextNodeId.value = 1
+  selectedNodeId.value = null
+}
+
 // 暴露方法给父组件
 defineExpose({
-  addNode
+  addNode,
+  getCanvasState,
+  loadCanvasState,
+  clearCanvas
 })
 </script>
 

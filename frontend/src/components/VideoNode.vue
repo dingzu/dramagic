@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps({
   id: Number,
@@ -19,6 +19,10 @@ const timer = ref(null)
 const localPrompt = ref(props.data.prompt || '')
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
+
+// 拖拽性能：每帧最多触发一次位置更新（避免每个 mousemove 都排一个 rAF）
+let dragRafId = null
+let pendingPos = null
 
 const statusText = computed(() => {
   switch (props.data.status) {
@@ -112,15 +116,28 @@ const startDrag = (e) => {
   
   const onMouseMove = (e) => {
     if (isDragging.value) {
-      // 使用 requestAnimationFrame 优化性能
-      requestAnimationFrame(() => {
-        emit('update:position', props.id, e.clientX - dragStart.value.x, e.clientY - dragStart.value.y)
-      })
+      pendingPos = {
+        x: e.clientX - dragStart.value.x,
+        y: e.clientY - dragStart.value.y
+      }
+
+      if (dragRafId == null) {
+        dragRafId = requestAnimationFrame(() => {
+          dragRafId = null
+          if (!pendingPos) return
+          emit('update:position', props.id, pendingPos.x, pendingPos.y)
+        })
+      }
     }
   }
   
   const onMouseUp = () => {
     isDragging.value = false
+    pendingPos = null
+    if (dragRafId != null) {
+      cancelAnimationFrame(dragRafId)
+      dragRafId = null
+    }
     document.removeEventListener('mousemove', onMouseMove)
     document.removeEventListener('mouseup', onMouseUp)
   }
@@ -141,6 +158,42 @@ const updatePrompt = (e) => {
   localPrompt.value = e.target.value
   emit('update:data', props.id, { prompt: e.target.value })
 }
+
+const startOrResumeTimer = (requestId, startTs) => {
+  if (!requestId) return
+
+  // 清理旧定时器
+  if (timer.value) {
+    clearInterval(timer.value)
+    timer.value = null
+  }
+
+  const ts = Number(startTs) || Date.now()
+  startTime.value = ts
+  elapsedSeconds.value = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+
+  // 立即拉一次状态，避免用户打开后还要等 5s
+  pollStatus(requestId)
+
+  timer.value = setInterval(() => {
+    elapsedSeconds.value = Math.max(0, Math.floor((Date.now() - startTime.value) / 1000))
+    const es = elapsedSeconds.value
+    if (es % 5 === 0) {
+      pollStatus(requestId)
+    }
+  }, 1000)
+}
+
+onMounted(() => {
+  // 项目重启/重新打开后：如果有未完成任务，继续轮询直到完成
+  const status = props.data?.status
+  const requestId = props.data?.requestId
+  const startTs = props.data?.startTime
+  const shouldResume = (status === 'queued' || status === 'in_progress' || status === 'creating') && requestId
+  if (shouldResume) {
+    startOrResumeTimer(requestId, startTs)
+  }
+})
 
 const generate = async () => {
   if (!localPrompt.value.trim()) {
@@ -186,25 +239,17 @@ const generate = async () => {
     }
 
     const requestId = data.data?.request_id
+    const startTs = Date.now()
 
     emit('update:data', props.id, { 
       status: 'queued',
       requestId,
+      startTime: startTs,
       resultData: data // 保存创建结果
     })
 
     // 开始计时
-    startTime.value = Date.now()
-    timer.value = setInterval(() => {
-      const now = Date.now()
-      elapsedSeconds.value = Math.floor((now - startTime.value) / 1000)
-      
-      const es = elapsedSeconds.value
-      // 轮询策略: 5s, 10s, 15s... 加快轮询频率以获得更好体验
-      if (es % 5 === 0) {
-        pollStatus(requestId)
-      }
-    }, 1000)
+    startOrResumeTimer(requestId, startTs)
 
   } catch (err) {
     emit('update:data', props.id, { 
@@ -257,7 +302,7 @@ const pollStatus = async (requestId) => {
   <div 
     class="node video-node"
     :class="{ selected, dragging: isDragging }"
-    :style="{ left: x + 'px', top: y + 'px' }"
+    :style="{ transform: `translate3d(${x}px, ${y}px, 0)` }"
   >
     <div class="node-header" @mousedown="startDrag">
       <span class="node-icon">🎬</span>
@@ -334,6 +379,8 @@ const pollStatus = async (requestId) => {
 <style scoped>
 .node {
   position: absolute;
+  left: 0;
+  top: 0;
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
@@ -341,6 +388,10 @@ const pollStatus = async (requestId) => {
   min-width: 320px;
   min-height: 200px;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  /* 性能：把移动走合成层，减少重排 */
+  will-change: transform;
+  /* 性能：限制布局/绘制影响范围 */
+  contain: layout paint;
   
   /* Enable resize */
   resize: both;

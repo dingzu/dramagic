@@ -14,6 +14,10 @@ const emit = defineEmits(['update:position', 'update:data', 'select', 'delete'])
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
 
+// 拖拽性能：每帧最多触发一次位置更新
+let dragRafId = null
+let pendingPos = null
+
 const startDrag = (e) => {
   isDragging.value = true
   dragStart.value = {
@@ -27,15 +31,28 @@ const startDrag = (e) => {
   
   const onMouseMove = (e) => {
     if (isDragging.value) {
-      // 使用 requestAnimationFrame 优化性能
-      requestAnimationFrame(() => {
-        emit('update:position', props.id, e.clientX - dragStart.value.x, e.clientY - dragStart.value.y)
-      })
+      pendingPos = {
+        x: e.clientX - dragStart.value.x,
+        y: e.clientY - dragStart.value.y
+      }
+
+      if (dragRafId == null) {
+        dragRafId = requestAnimationFrame(() => {
+          dragRafId = null
+          if (!pendingPos) return
+          emit('update:position', props.id, pendingPos.x, pendingPos.y)
+        })
+      }
     }
   }
   
   const onMouseUp = () => {
     isDragging.value = false
+    pendingPos = null
+    if (dragRafId != null) {
+      cancelAnimationFrame(dragRafId)
+      dragRafId = null
+    }
     document.removeEventListener('mousemove', onMouseMove)
     document.removeEventListener('mouseup', onMouseUp)
   }
@@ -57,7 +74,7 @@ const handleDelete = () => {
   <div 
     class="node text-node"
     :class="{ selected, dragging: isDragging }"
-    :style="{ left: x + 'px', top: y + 'px' }"
+    :style="{ transform: `translate3d(${x}px, ${y}px, 0)` }"
   >
     <div class="node-header" @mousedown="startDrag">
       <span class="node-icon">📝</span>
@@ -78,6 +95,8 @@ const handleDelete = () => {
 <style scoped>
 .node {
   position: absolute;
+  left: 0;
+  top: 0;
   background: white;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
@@ -85,6 +104,8 @@ const handleDelete = () => {
   min-width: 280px;
   min-height: 160px;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
+  contain: layout paint;
   
   /* Enable resize */
   resize: both;

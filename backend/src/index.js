@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
 import { fal } from '@fal-ai/client';
+import { getDbPool, initDb } from './db.js';
 
 // 加载环境变量
 dotenv.config();
@@ -10,6 +11,21 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 const API_VERSION = process.env.API_VERSION || 'v1';
+
+// 数据库初始化（如配置了 DATABASE_URL）
+let dbReady = false;
+async function ensureDbReady() {
+  if (dbReady) return true;
+  try {
+    await initDb();
+    dbReady = true;
+    console.log('✅ 数据库已就绪');
+    return true;
+  } catch (e) {
+    console.warn('⚠️ 数据库未就绪（可忽略：仅影响项目管理功能）:', e.message);
+    return false;
+  }
+}
 
 // Comfly Chat 配置
 const COMFLY_BASE_URL = process.env.COMFLY_BASE_URL || 'https://ai.comfly.chat';
@@ -92,6 +108,152 @@ app.get('/api/v1/example', (req, res) => {
       message: '这是一个示例 API 接口'
     }
   });
+});
+
+/**
+ * 项目管理（Project）
+ * - GET    /api/v1/projects
+ * - POST   /api/v1/projects
+ * - GET    /api/v1/projects/:id
+ * - PUT    /api/v1/projects/:id
+ */
+app.get(`/api/${API_VERSION}/projects`, async (req, res) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用（请配置 DATABASE_URL）',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  const pool = getDbPool();
+  const { rows } = await pool.query(
+    `SELECT id, name, created_at, updated_at
+     FROM projects
+     ORDER BY updated_at DESC`
+  );
+
+  return res.json({ success: true, data: rows });
+});
+
+app.post(`/api/${API_VERSION}/projects`, async (req, res) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用（请配置 DATABASE_URL）',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  const { name, canvas_state } = req.body || {};
+  const projectName = (name || '').trim() || '未命名项目';
+
+  const pool = getDbPool();
+  const { rows } = await pool.query(
+    `INSERT INTO projects (name, canvas_state, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     RETURNING id, name, created_at, updated_at`,
+    [projectName, JSON.stringify(canvas_state || {})]
+  );
+
+  return res.status(201).json({ success: true, data: rows[0], message: '项目创建成功' });
+});
+
+app.get(`/api/${API_VERSION}/projects/:id`, async (req, res) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用（请配置 DATABASE_URL）',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ success: false, error: 'id 不合法', code: 'VALIDATION_ERROR' });
+  }
+
+  const pool = getDbPool();
+  const { rows } = await pool.query(
+    `SELECT id, name, canvas_state, created_at, updated_at
+     FROM projects
+     WHERE id = $1`,
+    [id]
+  );
+
+  if (!rows[0]) {
+    return res.status(404).json({ success: false, error: '项目不存在', code: 'NOT_FOUND' });
+  }
+
+  return res.json({ success: true, data: rows[0] });
+});
+
+app.put(`/api/${API_VERSION}/projects/:id`, async (req, res) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用（请配置 DATABASE_URL）',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ success: false, error: 'id 不合法', code: 'VALIDATION_ERROR' });
+  }
+
+  const { name, canvas_state } = req.body || {};
+  const updates = [];
+  const params = [];
+  let i = 1;
+
+  if (typeof name === 'string') {
+    updates.push(`name = $${i++}`);
+    params.push(name.trim() || '未命名项目');
+  }
+
+  if (canvas_state !== undefined) {
+    updates.push(`canvas_state = $${i++}::jsonb`);
+    params.push(JSON.stringify(canvas_state || {}));
+  }
+
+  updates.push(`updated_at = NOW()`);
+
+  if (params.length === 0) {
+    // 仅更新时间
+    params.push(id);
+    const pool = getDbPool();
+    const { rows } = await pool.query(
+      `UPDATE projects SET updated_at = NOW()
+       WHERE id = $1
+       RETURNING id, name, created_at, updated_at`,
+      params
+    );
+    if (!rows[0]) {
+      return res.status(404).json({ success: false, error: '项目不存在', code: 'NOT_FOUND' });
+    }
+    return res.json({ success: true, data: rows[0], message: '项目已更新' });
+  }
+
+  params.push(id);
+  const pool = getDbPool();
+  const { rows } = await pool.query(
+    `UPDATE projects
+     SET ${updates.join(', ')}
+     WHERE id = $${i}
+     RETURNING id, name, created_at, updated_at`,
+    params
+  );
+
+  if (!rows[0]) {
+    return res.status(404).json({ success: false, error: '项目不存在', code: 'NOT_FOUND' });
+  }
+
+  return res.json({ success: true, data: rows[0], message: '项目已更新' });
 });
 
 /**

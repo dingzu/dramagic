@@ -327,12 +327,22 @@ const handleQuery = async () => {
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   border: 1px solid #f1f5f9;
   transition: transform 0.2s, box-shadow 0.2s;
+  /* 性能：减少 resize 期间的整体重排/重绘影响范围 */
+  contain: layout paint;
+  /* 性能：提示浏览器本元素尺寸会频繁变化（resize） */
+  will-change: width, height;
   
   /* Enable resize */
   resize: both;
   overflow: auto;
   min-width: 300px;
   min-height: 200px;
+}
+
+.card:active {
+  /* 性能：拉伸/拖动时避免过渡和昂贵阴影插值 */
+  transition: none;
+  box-shadow: 0 2px 3px -1px rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
 }
 
 .card:hover {
