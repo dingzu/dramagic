@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import axios from 'axios';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 import { fal } from '@fal-ai/client';
 import { getDbPool, initDb } from './db.js';
 
@@ -41,10 +43,90 @@ if (FAL_KEY) {
   });
 }
 
+// 创建 HTTP 服务器和 Socket.IO
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST']
+  }
+});
+
 // 中间件
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Socket.IO 事件处理
+// 追踪每个 socket 所在的项目房间，用于断开时更新人数
+const socketProjectMap = new Map();
+
+io.on('connection', (socket) => {
+  console.log('Socket connected:', socket.id);
+
+  // 加入项目房间
+  socket.on('join-project', ({ projectId }) => {
+    if (!projectId) return;
+
+    // 如果之前在其他房间，先离开
+    const prevProjectId = socketProjectMap.get(socket.id);
+    if (prevProjectId && prevProjectId !== projectId) {
+      const prevRoom = `project-${prevProjectId}`;
+      socket.leave(prevRoom);
+      // 广播旧房间人数
+      const prevCount = io.sockets.adapter.rooms.get(prevRoom)?.size || 0;
+      io.to(prevRoom).emit('online-users', { count: prevCount });
+    }
+
+    const room = `project-${projectId}`;
+    socket.join(room);
+    socketProjectMap.set(socket.id, projectId);
+    console.log(`Socket ${socket.id} joined room ${room}`);
+
+    // 广播当前房间人数
+    const count = io.sockets.adapter.rooms.get(room)?.size || 0;
+    io.to(room).emit('online-users', { count });
+  });
+
+  // 离开项目房间
+  socket.on('leave-project', ({ projectId }) => {
+    if (!projectId) return;
+    const room = `project-${projectId}`;
+    socket.leave(room);
+    socketProjectMap.delete(socket.id);
+    console.log(`Socket ${socket.id} left room ${room}`);
+
+    // 广播当前房间人数
+    const count = io.sockets.adapter.rooms.get(room)?.size || 0;
+    io.to(room).emit('online-users', { count });
+  });
+
+  // 画布更新广播
+  socket.on('canvas-update', ({ projectId, state }) => {
+    if (!projectId) return;
+    const room = `project-${projectId}`;
+    // 广播给房间内其他人（不包括发送者）
+    socket.to(room).emit('canvas-update', { projectId, state });
+  });
+
+  // 断开连接
+  socket.on('disconnect', () => {
+    console.log('Socket disconnected:', socket.id);
+
+    // 获取之前所在的项目房间，广播更新后的人数
+    const projectId = socketProjectMap.get(socket.id);
+    if (projectId) {
+      const room = `project-${projectId}`;
+      socketProjectMap.delete(socket.id);
+      // 延迟一点确保 socket 已从房间移除
+      setTimeout(() => {
+        const count = io.sockets.adapter.rooms.get(room)?.size || 0;
+        io.to(room).emit('online-users', { count });
+        console.log(`Room ${room} now has ${count} users`);
+      }, 100);
+    }
+  });
+});
 
 // 健康检查接口
 app.get('/health', (req, res) => {
@@ -713,10 +795,11 @@ app.use((err, req, res, next) => {
   });
 });
 
-// 启动服务器
-app.listen(PORT, () => {
+// 启动服务器（使用 httpServer 以支持 Socket.IO）
+httpServer.listen(PORT, () => {
   console.log(`🚀 Dramagic 后端服务已启动`);
   console.log(`📡 监听端口: ${PORT}`);
   console.log(`🌍 环境: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔌 Socket.IO 已启用`);
   console.log(`⏰ 启动时间: ${new Date().toLocaleString('zh-CN')}`);
 });

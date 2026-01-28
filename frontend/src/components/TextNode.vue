@@ -9,7 +9,7 @@ const props = defineProps({
   selected: Boolean
 })
 
-const emit = defineEmits(['update:position', 'update:data', 'select', 'delete'])
+const emit = defineEmits(['update:position', 'update:data', 'select', 'delete', 'drag-end'])
 
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
@@ -48,11 +48,16 @@ const startDrag = (e) => {
   
   const onMouseUp = () => {
     isDragging.value = false
-    pendingPos = null
     if (dragRafId != null) {
       cancelAnimationFrame(dragRafId)
       dragRafId = null
     }
+    // 拖拽结束，通知父组件进行同步
+    if (pendingPos) {
+      emit('update:position', props.id, pendingPos.x, pendingPos.y)
+    }
+    emit('drag-end', props.id)
+    pendingPos = null
     document.removeEventListener('mousemove', onMouseMove)
     document.removeEventListener('mouseup', onMouseUp)
   }

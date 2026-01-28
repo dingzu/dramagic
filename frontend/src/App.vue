@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { io } from 'socket.io-client'
 import Login from './components/Login.vue'
 import Sidebar from './components/Sidebar.vue'
 import Canvas from './components/Canvas.vue'
@@ -12,10 +13,15 @@ const activeTab = ref('canvas')
 const canvasRef = ref(null)
 const currentProject = ref(null)
 const creatingProject = ref(false)
+const onlineUsers = ref(0)
 
 let autosaveTimer = null
 let backendSaveTimer = null
-let dirty = false
+let dirtyProjectId = null
+let pendingSaveProjectId = null
+let pendingSaveState = null
+let socket = null
+let ignoreNextRemoteUpdate = false
 
 const activeProjectStorageKey = () => `dramagic_active_project_id`
 const projectCanvasStorageKey = (id) => `dramagic_project_${id}_canvas_state`
@@ -31,13 +37,22 @@ const writeLocalCache = (projectId, canvasState) => {
   }
 }
 
-const scheduleBackendSave = () => {
-  if (!currentProject.value?.id) return
-  if (!dirty) return
+const scheduleBackendSave = (projectId, canvasState) => {
+  if (!projectId) return
+
+  // 绑定 projectId 的防抖，避免跨项目写入
+  pendingSaveProjectId = projectId
+  pendingSaveState = canvasState
 
   if (backendSaveTimer) clearTimeout(backendSaveTimer)
   backendSaveTimer = setTimeout(() => {
-    handleProjectSave({ silent: true })
+    if (!pendingSaveProjectId) return
+    // 关键：只保存触发该定时器的项目
+    const pid = pendingSaveProjectId
+    const st = pendingSaveState
+    pendingSaveProjectId = null
+    pendingSaveState = null
+    saveProjectById(pid, st, { silent: true })
   }, 2000)
 }
 
@@ -81,7 +96,7 @@ const handleProjectCreated = async ({ name }) => {
     canvasRef.value?.loadCanvasState?.(canvas_state)
     localStorage.setItem(activeProjectStorageKey(), String(data.data.id))
     writeLocalCache(data.data.id, canvas_state)
-    dirty = false
+    dirtyProjectId = null
     window.alert('项目创建成功')
   } catch (e) {
     window.alert(e.message)
@@ -107,40 +122,52 @@ const handleProjectOpen = async ({ id }) => {
     const stateToLoad = localCanvas && localUpdatedAt > serverUpdatedAt ? localCanvas : data.data.canvas_state
     canvasRef.value?.loadCanvasState?.(stateToLoad)
     writeLocalCache(data.data.id, stateToLoad)
-    dirty = false
+    dirtyProjectId = null
   } catch (e) {
     window.alert(e.message)
   }
 }
 
-const handleProjectSave = async ({ silent = false } = {}) => {
-  if (!currentProject.value?.id) return
+const saveProjectById = async (projectId, canvasState, { silent = false } = {}) => {
+  if (!projectId) return
   try {
-    const canvas_state = canvasRef.value?.getCanvasState?.()
-    const resp = await fetch(`${apiBaseUrl}/api/v1/projects/${encodeURIComponent(currentProject.value.id)}`, {
+    const canvas_state = canvasState ?? canvasRef.value?.getCanvasState?.()
+    const resp = await fetch(`${apiBaseUrl}/api/v1/projects/${encodeURIComponent(projectId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ canvas_state })
     })
     const data = await resp.json()
     if (!resp.ok || !data.success) throw new Error(data.error || data.message || '保存失败')
-    dirty = false
-    writeLocalCache(currentProject.value.id, canvas_state)
+    dirtyProjectId = null
+    writeLocalCache(projectId, canvas_state)
     if (!silent) window.alert('保存成功')
   } catch (e) {
     if (!silent) window.alert(e.message)
   }
 }
 
+const handleProjectSave = async ({ silent = false } = {}) => {
+  const pid = currentProject.value?.id
+  if (!pid) return
+  const canvas_state = canvasRef.value?.getCanvasState?.()
+  await saveProjectById(pid, canvas_state, { silent })
+}
+
 const handleProjectClose = () => {
   currentProject.value = null
+  // 切项目/关闭时，取消未触发的后端保存，避免跨项目写入
+  if (backendSaveTimer) clearTimeout(backendSaveTimer)
+  backendSaveTimer = null
+  pendingSaveProjectId = null
+  pendingSaveState = null
   try {
     localStorage.removeItem(activeProjectStorageKey())
   } catch {
     // ignore
   }
   canvasRef.value?.clearCanvas?.()
-  dirty = false
+  dirtyProjectId = null
 }
 
 const handleProjectDeleted = ({ id }) => {
@@ -155,11 +182,117 @@ const handleProjectDeleted = ({ id }) => {
   }
 }
 
-const handleCanvasChanged = (state) => {
-  if (!currentProject.value?.id) return
-  dirty = true
-  writeLocalCache(currentProject.value.id, state)
-  scheduleBackendSave()
+// 记录本地最后更新时间戳，用于冲突检测
+let localLastUpdateTs = 0
+
+const handleCanvasChanged = (state, { fromRemote = false } = {}) => {
+  const pid = currentProject.value?.id
+  if (!pid) return
+
+  // 如果是远程更新触发的 changed 事件，忽略
+  if (ignoreNextRemoteUpdate) return
+
+  const ts = Date.now()
+  localLastUpdateTs = ts
+  dirtyProjectId = pid
+  writeLocalCache(pid, state)
+  scheduleBackendSave(pid, state)
+
+  // 广播给同项目的其他用户（带时间戳）
+  if (!fromRemote && socket && socket.connected) {
+    socket.emit('canvas-update', { projectId: pid, state, timestamp: ts })
+  }
+}
+
+// 重要变更：立即保存（如生成 Sora）
+const handleImportantChange = (state) => {
+  const pid = currentProject.value?.id
+  if (!pid) return
+
+  // 取消防抖定时器，立即保存
+  if (backendSaveTimer) clearTimeout(backendSaveTimer)
+  backendSaveTimer = null
+  pendingSaveProjectId = null
+  pendingSaveState = null
+
+  const ts = Date.now()
+  localLastUpdateTs = ts
+  writeLocalCache(pid, state)
+  saveProjectById(pid, state, { silent: true })
+
+  // 广播（带时间戳）
+  if (socket && socket.connected) {
+    socket.emit('canvas-update', { projectId: pid, state, timestamp: ts })
+  }
+}
+
+// Socket.IO 连接管理
+const connectSocket = () => {
+  if (socket) return
+
+  socket = io(apiBaseUrl, {
+    transports: ['websocket', 'polling'],
+    autoConnect: true
+  })
+
+  socket.on('connect', () => {
+    console.log('Socket connected:', socket.id)
+    // 如果已有打开的项目，加入房间
+    if (currentProject.value?.id) {
+      socket.emit('join-project', { projectId: currentProject.value.id })
+    }
+  })
+
+  socket.on('disconnect', () => {
+    console.log('Socket disconnected')
+    onlineUsers.value = 0
+  })
+
+  socket.on('online-users', ({ count }) => {
+    onlineUsers.value = count
+  })
+
+  socket.on('canvas-update', ({ projectId, state, timestamp }) => {
+    // 只处理当前项目的更新
+    if (projectId !== currentProject.value?.id) return
+
+    // 时间戳冲突检测：如果远程更新比本地最后更新更旧，忽略
+    // 允许 500ms 的容差（网络延迟）
+    if (timestamp && localLastUpdateTs && timestamp < localLastUpdateTs - 500) {
+      console.log('Ignoring stale remote update:', timestamp, 'vs local:', localLastUpdateTs)
+      return
+    }
+
+    // 防止自己广播的更新再次触发
+    ignoreNextRemoteUpdate = true
+    canvasRef.value?.loadCanvasState?.(state)
+    writeLocalCache(projectId, state)
+    // loadCanvasState 会触发 changed 事件，需要忽略
+    setTimeout(() => {
+      ignoreNextRemoteUpdate = false
+    }, 100)
+  })
+}
+
+const disconnectSocket = () => {
+  if (socket) {
+    socket.disconnect()
+    socket = null
+  }
+  onlineUsers.value = 0
+}
+
+// 加入/离开项目房间
+const joinProjectRoom = (projectId) => {
+  if (socket && socket.connected && projectId) {
+    socket.emit('join-project', { projectId })
+  }
+}
+
+const leaveProjectRoom = (projectId) => {
+  if (socket && socket.connected && projectId) {
+    socket.emit('leave-project', { projectId })
+  }
 }
 
 onMounted(() => {
@@ -176,11 +309,25 @@ onMounted(() => {
   if (lastId) {
     handleProjectOpen({ id: lastId })
   }
+
+  // 连接 Socket.IO
+  connectSocket()
 })
 
 onUnmounted(() => {
   if (autosaveTimer) clearInterval(autosaveTimer)
   if (backendSaveTimer) clearTimeout(backendSaveTimer)
+  disconnectSocket()
+})
+
+// 监听项目切换，自动加入/离开房间
+watch(currentProject, (newVal, oldVal) => {
+  if (oldVal?.id) {
+    leaveProjectRoom(oldVal.id)
+  }
+  if (newVal?.id) {
+    joinProjectRoom(newVal.id)
+  }
 })
 </script>
 
@@ -210,6 +357,10 @@ onUnmounted(() => {
         >
           Playground
         </button>
+        <div v-if="onlineUsers > 0 && currentProject?.id" class="online-users">
+          <span class="online-dot"></span>
+          <span class="online-count">{{ onlineUsers }} 人在线</span>
+        </div>
         <button 
           class="nav-item logout-btn"
           @click="handleLogout"
@@ -235,6 +386,7 @@ onUnmounted(() => {
           ref="canvasRef"
           :project-id="currentProject?.id ?? 'no-project'"
           @changed="handleCanvasChanged"
+          @important-change="handleImportantChange"
         />
       </template>
       <Playground v-else />
@@ -316,5 +468,35 @@ onUnmounted(() => {
   display: flex;
   flex: 1;
   overflow: hidden;
+}
+
+.online-users {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: #ecfdf5;
+  border: 1px solid #a7f3d0;
+  border-radius: 20px;
+  margin-right: 8px;
+}
+
+.online-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.online-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #059669;
 }
 </style>

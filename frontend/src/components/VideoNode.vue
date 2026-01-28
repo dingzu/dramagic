@@ -9,7 +9,7 @@ const props = defineProps({
   selected: Boolean
 })
 
-const emit = defineEmits(['update:position', 'update:data', 'select', 'delete', 'show-details'])
+const emit = defineEmits(['update:position', 'update:data', 'select', 'delete', 'show-details', 'drag-end'])
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
@@ -133,11 +133,16 @@ const startDrag = (e) => {
   
   const onMouseUp = () => {
     isDragging.value = false
-    pendingPos = null
     if (dragRafId != null) {
       cancelAnimationFrame(dragRafId)
       dragRafId = null
     }
+    // 拖拽结束，通知父组件进行同步
+    if (pendingPos) {
+      emit('update:position', props.id, pendingPos.x, pendingPos.y)
+    }
+    emit('drag-end', props.id)
+    pendingPos = null
     document.removeEventListener('mousemove', onMouseMove)
     document.removeEventListener('mouseup', onMouseUp)
   }

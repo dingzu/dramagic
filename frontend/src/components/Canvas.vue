@@ -4,7 +4,7 @@ import TextNode from './TextNode.vue'
 import VideoNode from './VideoNode.vue'
 import Modal from './Modal.vue'
 
-const emit = defineEmits(['changed'])
+const emit = defineEmits(['changed', 'important-change'])
 
 const props = defineProps({
   projectId: {
@@ -74,22 +74,38 @@ const deleteNode = (id) => {
   }
 }
 
-// 更新节点位置
+// 更新节点位置（拖拽过程中，不触发同步广播）
 const updateNodePosition = (id, x, y) => {
   const node = nodes.value.find(n => n.id === id)
   if (node) {
     node.x = x
     node.y = y
-    emit('changed', getCanvasState())
+    // 拖拽过程中只更新本地，不触发 changed 事件（避免抖动）
   }
+}
+
+// 拖拽结束，触发同步广播
+const handleDragEnd = (id) => {
+  emit('changed', getCanvasState())
 }
 
 // 更新节点数据
 const updateNodeData = (id, data) => {
   const node = nodes.value.find(n => n.id === id)
   if (node) {
+    // 检测是否是"开始生成 Sora"的重要变更
+    const isStartingSora = node.type === 'video' &&
+      (node.data.status === 'idle' || node.data.status === 'failed' || node.data.status === 'completed') &&
+      (data.status === 'creating' || data.status === 'queued')
+
     node.data = { ...node.data, ...data }
-    emit('changed', getCanvasState())
+    const state = getCanvasState()
+    emit('changed', state)
+
+    // 重要变更：立即触发保存
+    if (isStartingSora) {
+      emit('important-change', state)
+    }
   }
 }
 
@@ -183,6 +199,7 @@ defineExpose({
       @select="selectNode"
       @delete="deleteNode"
       @show-details="handleShowDetails"
+      @drag-end="handleDragEnd"
       @click.stop
     />
 
