@@ -110,12 +110,14 @@ dramagic/
 | 节点 | 说明 |
 |------|------|
 | TextNode | 文本节点，可编辑内容 |
-| VideoNode | Sora 2 视频生成节点 |
+| VideoNode | Sora 2 视频生成节点，支持切换来源（fal.ai / Comfly 官方优质版 / Comfly Original） |
 
 ### 5. AI 视频生成
 支持以下 MaaS 服务：
-- **Comfly Chat**：廉价版/官方版/Original版
-- **fal.ai**：Sora 2 模型
+- **fal.ai**：Sora 2 模型（$0.10/秒）
+- **Comfly Chat 官方优质版**：OpenAI 官方 Token（¥0.48/秒）
+- **Comfly Chat Original版**：Original Token（¥0.876/秒）
+- **Comfly Chat 廉价版**：仅在 SoraPlatform 页面支持
 
 ### 6. 价格配置
 独立配置模块 `config/pricing.js`：

@@ -1,11 +1,7 @@
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
-
-// 布局状态
-const widgets = ref(['create', 'query'])
-const draggedItem = ref(null)
 
 // Modal 状态
 const showModal = ref(false)
@@ -23,11 +19,12 @@ const closeModal = () => {
   modalContent.value = null
 }
 
-// Comfly Chat 参数
+// Comfly Chat 参数（新版 /v1/videos 格式）
 const comflyPrompt = ref('')
 const comflyTokenType = ref('default')
-const comflyDuration = ref('10')
-const comflyAspectRatio = ref('16:9')
+const comflySize = ref('1280x720')
+const comflySeconds = ref('5')
+const comflyModel = ref('sora-2')
 
 const comflyCreating = ref(false)
 const comflyResult = ref(null)
@@ -40,34 +37,6 @@ const querying = ref(false)
 const queryResult = ref(null)
 const queryError = ref('')
 
-// 拖拽处理
-const handleDragStart = (e, item) => {
-  draggedItem.value = item
-  e.dataTransfer.effectAllowed = 'move'
-  e.target.style.opacity = '0.5'
-}
-
-const handleDragEnd = (e) => {
-  draggedItem.value = null
-  e.target.style.opacity = '1'
-}
-
-const handleDragOver = (e) => {
-  e.preventDefault()
-  e.dataTransfer.dropEffect = 'move'
-}
-
-const handleDrop = (e, targetItem) => {
-  e.preventDefault()
-  if (draggedItem.value === targetItem) return
-  
-  const oldIndex = widgets.value.indexOf(draggedItem.value)
-  const newIndex = widgets.value.indexOf(targetItem)
-  
-  widgets.value.splice(oldIndex, 1)
-  widgets.value.splice(newIndex, 0, draggedItem.value)
-}
-
 const handleComflyCreate = async () => {
   if (!comflyPrompt.value.trim()) {
     comflyError.value = '请输入描述词'
@@ -79,15 +48,16 @@ const handleComflyCreate = async () => {
   comflyError.value = ''
 
   try {
-    const resp = await fetch(`${apiBaseUrl}/api/v1/ai/comfly/sora-2/generations`, {
+    const resp = await fetch(`${apiBaseUrl}/api/v1/ai/comfly/sora-2/videos`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt: comflyPrompt.value,
-        aspect_ratio: comflyAspectRatio.value,
-        duration: comflyDuration.value,
-        token_type: comflyTokenType.value,
-        hd: false
+        model: comflyModel.value,
+        size: comflySize.value,
+        seconds: comflySeconds.value,
+        watermark: false,
+        token_type: comflyTokenType.value
       })
     })
 
@@ -98,7 +68,7 @@ const handleComflyCreate = async () => {
     }
 
     comflyResult.value = data.data
-    queryTaskId.value = data.data?.task_id || data.data?.id || ''
+    queryTaskId.value = data.data?.id || ''
     queryTokenType.value = comflyTokenType.value
   } catch (err) {
     comflyError.value = err.message
@@ -119,7 +89,7 @@ const handleQuery = async () => {
 
   try {
     const resp = await fetch(
-      `${apiBaseUrl}/api/v1/ai/comfly/sora-2/generations/${encodeURIComponent(queryTaskId.value)}?token_type=${queryTokenType.value}`
+      `${apiBaseUrl}/api/v1/ai/comfly/sora-2/videos/${encodeURIComponent(queryTaskId.value)}?token_type=${queryTokenType.value}`
     )
 
     const data = await resp.json()
@@ -145,122 +115,123 @@ const handleQuery = async () => {
     </div>
 
     <div class="widgets-container">
-      <div 
-        v-for="widget in widgets" 
-        :key="widget"
-        class="widget-wrapper"
-        draggable="true"
-        @dragstart="handleDragStart($event, widget)"
-        @dragend="handleDragEnd"
-        @dragover="handleDragOver"
-        @drop="handleDrop($event, widget)"
-      >
-        <!-- 创建任务卡片 -->
-        <div v-if="widget === 'create'" class="card section">
-          <div class="card-header">
-            <h3>Comfly Chat - 创建任务</h3>
-            <div class="drag-handle">⋮⋮</div>
-          </div>
-          
-          <div v-if="comflyError" class="alert error">
-            {{ comflyError }}
-          </div>
+      <!-- 创建任务卡片 -->
+      <div class="card section">
+        <div class="card-header">
+          <h3>Comfly Chat - 创建任务</h3>
+        </div>
+        
+        <div v-if="comflyError" class="alert error">
+          {{ comflyError }}
+        </div>
 
+        <div class="field">
+          <label>Token 类型</label>
+          <select v-model="comflyTokenType">
+            <option value="default">廉价版（¥0.12/次）</option>
+            <option value="premium">官方优质版（¥0.48/秒）</option>
+            <option value="original">Original 版（¥0.876/秒）</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>描述词</label>
+          <textarea v-model="comflyPrompt" rows="3" placeholder="描述你想要生成的视频..."></textarea>
+        </div>
+
+        <div class="field-row">
           <div class="field">
-            <label>Token 类型</label>
-            <select v-model="comflyTokenType">
-              <option value="default">廉价版（¥0.12/次）</option>
-              <option value="premium">官方优质版（¥0.48/秒）</option>
-              <option value="original">Original 版（¥0.876/秒）</option>
+            <label>分辨率</label>
+            <select v-model="comflySize">
+              <option value="1280x720">1280x720（横屏）</option>
+              <option value="720x1280">720x1280（竖屏）</option>
             </select>
           </div>
 
           <div class="field">
-            <label>描述词</label>
-            <textarea v-model="comflyPrompt" rows="3" placeholder="描述你想要生成的视频..."></textarea>
-          </div>
-
-          <div class="field-row">
-            <div class="field">
-              <label>画面比例</label>
-              <select v-model="comflyAspectRatio">
-                <option value="16:9">16:9</option>
-                <option value="9:16">9:16</option>
-                <option value="1:1">1:1</option>
-              </select>
-            </div>
-
-            <div class="field">
-              <label>时长（秒）</label>
-              <select v-model="comflyDuration">
-                <option value="10">10</option>
-                <option value="15">15</option>
-              </select>
-            </div>
-          </div>
-
-          <button class="btn primary" @click="handleComflyCreate" :disabled="comflyCreating">
-            {{ comflyCreating ? '创建中...' : '创建任务' }}
-          </button>
-
-          <div v-if="comflyResult" class="result">
-            <div class="result-header">
-              <span class="result-title">创建成功</span>
-              <button class="btn-text" @click="openModal('创建结果', comflyResult)">查看详情</button>
-            </div>
-            <div class="result-item">
-              <span class="label">任务 ID:</span>
-              <code>{{ comflyResult.task_id || comflyResult.id }}</code>
-            </div>
+            <label>时长（秒）</label>
+            <select v-model="comflySeconds">
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="8">8</option>
+              <option value="10">10</option>
+              <option value="12">12</option>
+            </select>
           </div>
         </div>
 
-        <!-- 查询任务卡片 -->
-        <div v-if="widget === 'query'" class="card section">
-          <div class="card-header">
-            <h3>查询任务状态</h3>
-            <div class="drag-handle">⋮⋮</div>
+        <div class="field">
+          <label>模型</label>
+          <select v-model="comflyModel">
+            <option value="sora-2">sora-2</option>
+            <option value="sora-2-pro">sora-2-pro</option>
+          </select>
+        </div>
+
+        <button class="btn primary" @click="handleComflyCreate" :disabled="comflyCreating">
+          {{ comflyCreating ? '创建中...' : '创建任务' }}
+        </button>
+
+        <div v-if="comflyResult" class="result">
+          <div class="result-header">
+            <span class="result-title">创建成功</span>
+            <button class="btn-text" @click="openModal('创建结果', comflyResult)">查看详情</button>
           </div>
-
-          <div v-if="queryError" class="alert error">
-            {{ queryError }}
+          <div class="result-item">
+            <span class="label">任务 ID:</span>
+            <code>{{ comflyResult.id }}</code>
           </div>
-
-          <div class="field">
-            <label>Token 类型</label>
-            <select v-model="queryTokenType">
-              <option value="default">廉价版</option>
-              <option value="premium">官方优质版</option>
-              <option value="original">Original 版</option>
-            </select>
+          <div v-if="comflyResult.status" class="result-item">
+            <span class="label">状态:</span>
+            <span class="status" :class="comflyResult.status">{{ comflyResult.status }}</span>
           </div>
+        </div>
+      </div>
 
-          <div class="field">
-            <label>任务 ID</label>
-            <input v-model="queryTaskId" placeholder="输入任务 ID" />
+      <!-- 查询任务卡片 -->
+      <div class="card section">
+        <div class="card-header">
+          <h3>查询任务状态</h3>
+        </div>
+
+        <div v-if="queryError" class="alert error">
+          {{ queryError }}
+        </div>
+
+        <div class="field">
+          <label>Token 类型</label>
+          <select v-model="queryTokenType">
+            <option value="default">廉价版</option>
+            <option value="premium">官方优质版</option>
+            <option value="original">Original 版</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>任务 ID</label>
+          <input v-model="queryTaskId" placeholder="输入任务 ID" />
+        </div>
+
+        <button class="btn" @click="handleQuery" :disabled="querying">
+          {{ querying ? '查询中...' : '查询状态' }}
+        </button>
+
+        <div v-if="queryResult" class="result">
+          <div class="result-header">
+            <span class="result-title">查询结果</span>
+            <button class="btn-text" @click="openModal('查询结果', queryResult)">查看详情</button>
           </div>
-
-          <button class="btn" @click="handleQuery" :disabled="querying">
-            {{ querying ? '查询中...' : '查询状态' }}
-          </button>
-
-          <div v-if="queryResult" class="result">
-            <div class="result-header">
-              <span class="result-title">查询结果</span>
-              <button class="btn-text" @click="openModal('查询结果', queryResult)">查看详情</button>
-            </div>
-            <div class="result-item">
-              <span class="label">状态:</span>
-              <span class="status" :class="queryResult.status">{{ queryResult.status }}</span>
-            </div>
-            <div class="result-item">
-              <span class="label">进度:</span>
-              <span>{{ queryResult.progress }}%</span>
-            </div>
-            <div v-if="queryResult.url || queryResult.video_url" class="result-item">
-              <span class="label">视频:</span>
-              <a :href="queryResult.url || queryResult.video_url" target="_blank">打开视频</a>
-            </div>
+          <div class="result-item">
+            <span class="label">状态:</span>
+            <span class="status" :class="queryResult.status">{{ queryResult.status }}</span>
+          </div>
+          <div class="result-item">
+            <span class="label">进度:</span>
+            <span>{{ queryResult.progress }}%</span>
+          </div>
+          <div v-if="queryResult.url || queryResult.video_url" class="result-item">
+            <span class="label">视频:</span>
+            <a :href="queryResult.url || queryResult.video_url" target="_blank">打开视频</a>
           </div>
         </div>
       </div>
@@ -326,23 +297,7 @@ const handleQuery = async () => {
   padding: 32px;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
   border: 1px solid #f1f5f9;
-  transition: transform 0.2s, box-shadow 0.2s;
-  /* 性能：减少 resize 期间的整体重排/重绘影响范围 */
-  contain: layout paint;
-  /* 性能：提示浏览器本元素尺寸会频繁变化（resize） */
-  will-change: width, height;
-  
-  /* Enable resize */
-  resize: both;
-  overflow: auto;
-  min-width: 300px;
-  min-height: 200px;
-}
-
-.card:active {
-  /* 性能：拉伸/拖动时避免过渡和昂贵阴影插值 */
-  transition: none;
-  box-shadow: 0 2px 3px -1px rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.02);
+  transition: box-shadow 0.2s;
 }
 
 .card:hover {
@@ -350,15 +305,7 @@ const handleQuery = async () => {
 }
 
 .card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   margin-bottom: 24px;
-  cursor: grab;
-}
-
-.card-header:active {
-  cursor: grabbing;
 }
 
 .card h3 {
@@ -366,13 +313,6 @@ const handleQuery = async () => {
   font-weight: 600;
   color: #1e293b;
   margin: 0;
-}
-
-.drag-handle {
-  color: #94a3b8;
-  font-size: 20px;
-  cursor: grab;
-  user-select: none;
 }
 
 .field {

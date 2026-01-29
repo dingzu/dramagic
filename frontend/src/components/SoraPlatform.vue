@@ -3,22 +3,27 @@ import { ref, computed } from 'vue'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
-// Comfly Chat 参数
+// Comfly Chat 参数（新版 /v1/videos 格式）
 // 官方优质版参数
 const premiumPrompt = ref('')
 const premiumSize = ref('1280x720')
-const premiumDuration = ref('5')
+const premiumSeconds = ref('5')
+const premiumModel = ref('sora-2')
+const premiumWatermark = ref(false)
 
 // Original 版参数
 const originalPrompt = ref('')
 const originalSize = ref('1280x720')
-const originalDuration = ref('5')
+const originalSeconds = ref('5')
+const originalModel = ref('sora-2')
+const originalWatermark = ref(false)
 
 // 廉价版参数
 const cheapPrompt = ref('')
-const cheapAspectRatio = ref('16:9')
-const cheapHd = ref(false)
-const cheapDuration = ref('10')
+const cheapSize = ref('1280x720')
+const cheapSeconds = ref('5')
+const cheapModel = ref('sora-2')
+const cheapWatermark = ref(false)
 
 // fal.ai 参数
 const falPrompt = ref('')
@@ -38,7 +43,6 @@ const lastTaskId = ref('')
 const lastTokenType = ref('default') // 记录上次创建任务使用的 token 类型
 const queryTaskId = ref('')
 const queryTokenType = ref('default') // 查询时使用的 token 类型
-const queryApiFormat = ref('v2') // 'v2' 或 'v1' (OpenAI 格式)
 
 const createResult = ref(null)
 const queryResult = ref(null)
@@ -69,25 +73,30 @@ const handleCreate = async () => {
     currentPrompt = premiumPrompt.value
     requestBody = {
       prompt: premiumPrompt.value,
+      model: premiumModel.value,
       size: premiumSize.value,
-      duration: premiumDuration.value,
+      seconds: premiumSeconds.value,
+      watermark: premiumWatermark.value,
       token_type: 'premium',
     }
   } else if (currentTab === 'original') {
     currentPrompt = originalPrompt.value
     requestBody = {
       prompt: originalPrompt.value,
+      model: originalModel.value,
       size: originalSize.value,
-      duration: originalDuration.value,
+      seconds: originalSeconds.value,
+      watermark: originalWatermark.value,
       token_type: 'original',
     }
   } else {
     currentPrompt = cheapPrompt.value
     requestBody = {
       prompt: cheapPrompt.value,
-      aspect_ratio: cheapAspectRatio.value,
-      hd: cheapHd.value,
-      duration: cheapDuration.value,
+      model: cheapModel.value,
+      size: cheapSize.value,
+      seconds: cheapSeconds.value,
+      watermark: cheapWatermark.value,
       token_type: 'default',
     }
   }
@@ -101,9 +110,8 @@ const handleCreate = async () => {
   createResult.value = null
 
   try {
-
     const resp = await fetch(
-      `${apiBaseUrl}/api/v1/ai/comfly/sora-2/generations`,
+      `${apiBaseUrl}/api/v1/ai/comfly/sora-2/videos`,
       {
         method: 'POST',
         headers: {
@@ -120,8 +128,8 @@ const handleCreate = async () => {
     }
 
     createResult.value = data.data
-    // 兼容不同返回格式：task_id 或 id
-    lastTaskId.value = data.data?.task_id || data.data?.id || ''
+    // 新接口返回 id 字段
+    lastTaskId.value = data.data?.id || ''
     lastTokenType.value = currentTab === 'premium' ? 'premium' : currentTab === 'original' ? 'original' : 'default'
     if (lastTaskId.value) {
       queryTaskId.value = lastTaskId.value
@@ -236,11 +244,8 @@ const handleQuery = async () => {
     // 使用用户选择的 token 类型
     const tokenType = queryTokenType.value
     
-    // 根据选择的 API 格式构建不同的路径
-    const apiPath =
-      queryApiFormat.value === 'v1'
-        ? `/api/v1/ai/comfly/sora-2/videos/${encodeURIComponent(id)}`
-        : `/api/v1/ai/comfly/sora-2/generations/${encodeURIComponent(id)}`
+    // 新版 API 只有 /v1/videos/:taskId 格式
+    const apiPath = `/api/v1/ai/comfly/sora-2/videos/${encodeURIComponent(id)}`
     
     const resp = await fetch(
       `${apiBaseUrl}${apiPath}?token_type=${tokenType}`,
@@ -326,30 +331,43 @@ const handleQuery = async () => {
 
           <div class="field-row">
             <label class="field">
-              <span class="field-label">画面比例（aspect_ratio）</span>
-              <select v-model="cheapAspectRatio" class="select">
-                <option value="16:9">16:9（横屏）</option>
-                <option value="9:16">9:16（竖屏）</option>
-                <option value="1:1">1:1（方形）</option>
+              <span class="field-label">分辨率（size）</span>
+              <select v-model="cheapSize" class="select">
+                <option value="1280x720">1280x720（720P 横屏）</option>
+                <option value="720x1280">720x1280（720P 竖屏）</option>
               </select>
             </label>
 
             <label class="field">
-              <span class="field-label">时长（秒）</span>
-              <select v-model="cheapDuration" class="select">
-                <option value="10">10 秒</option>
-                <option value="15">15 秒</option>
-              </select>
+              <span class="field-label">时长（seconds）</span>
+              <input
+                v-model="cheapSeconds"
+                class="input"
+                type="number"
+                min="4"
+                max="20"
+                step="1"
+              />
             </label>
           </div>
 
-          <label class="checkbox">
-            <input v-model="cheapHd" type="checkbox" />
-            <span>启用高清（hd）</span>
-          </label>
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">模型（model）</span>
+              <select v-model="cheapModel" class="select">
+                <option value="sora-2">sora-2</option>
+                <option value="sora-2-pro">sora-2-pro</option>
+              </select>
+            </label>
+
+            <label class="checkbox" style="align-self: flex-end; margin-bottom: 1rem;">
+              <input v-model="cheapWatermark" type="checkbox" />
+              <span>添加水印（watermark）</span>
+            </label>
+          </div>
 
           <div class="info-box">
-            <strong>💡 廉价版说明：</strong>仅支持 10 秒或 15 秒时长
+            <strong>💡 廉价版说明：</strong>使用 /v1/videos 接口，按秒计费
           </div>
         </div>
 
@@ -375,20 +393,35 @@ const handleQuery = async () => {
             </label>
 
             <label class="field">
-              <span class="field-label">时长（秒）</span>
+              <span class="field-label">时长（seconds）</span>
               <input
-                v-model="premiumDuration"
+                v-model="premiumSeconds"
                 class="input"
                 type="number"
                 min="4"
-                max="60"
+                max="20"
                 step="1"
               />
             </label>
           </div>
 
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">模型（model）</span>
+              <select v-model="premiumModel" class="select">
+                <option value="sora-2">sora-2</option>
+                <option value="sora-2-pro">sora-2-pro</option>
+              </select>
+            </label>
+
+            <label class="checkbox" style="align-self: flex-end; margin-bottom: 1rem;">
+              <input v-model="premiumWatermark" type="checkbox" />
+              <span>添加水印（watermark）</span>
+            </label>
+          </div>
+
           <div class="info-box">
-            <strong>💡 官方版说明：</strong>支持 4 秒以上，按秒计费（¥0.48/秒）
+            <strong>💡 官方版说明：</strong>支持 4-20 秒，按秒计费（¥0.48/秒）
           </div>
         </div>
 
@@ -414,20 +447,35 @@ const handleQuery = async () => {
             </label>
 
             <label class="field">
-              <span class="field-label">时长（秒）</span>
+              <span class="field-label">时长（seconds）</span>
               <input
-                v-model="originalDuration"
+                v-model="originalSeconds"
                 class="input"
                 type="number"
                 min="4"
-                max="60"
+                max="20"
                 step="1"
               />
             </label>
           </div>
 
+          <div class="field-row">
+            <label class="field">
+              <span class="field-label">模型（model）</span>
+              <select v-model="originalModel" class="select">
+                <option value="sora-2">sora-2</option>
+                <option value="sora-2-pro">sora-2-pro</option>
+              </select>
+            </label>
+
+            <label class="checkbox" style="align-self: flex-end; margin-bottom: 1rem;">
+              <input v-model="originalWatermark" type="checkbox" />
+              <span>添加水印（watermark）</span>
+            </label>
+          </div>
+
           <div class="info-box">
-            <strong>💡 Original 版说明：</strong>支持 4 秒以上，按秒计费（¥0.876/秒）
+            <strong>💡 Original 版说明：</strong>支持 4-20 秒，按秒计费（¥0.876/秒）
           </div>
         </div>
 
@@ -438,7 +486,17 @@ const handleQuery = async () => {
         <div v-if="createResult" class="result">
           <div class="result-row">
             <span class="result-label">任务 ID：</span>
-            <code class="result-value">{{ createResult.task_id || createResult.id }}</code>
+            <code class="result-value">{{ createResult.id }}</code>
+          </div>
+          <div v-if="createResult.status" class="result-row">
+            <span class="result-label">状态：</span>
+            <span class="status-pill" :data-status="createResult.status">
+              {{ createResult.status }}
+            </span>
+          </div>
+          <div v-if="createResult.model" class="result-row">
+            <span class="result-label">模型：</span>
+            <span class="result-value">{{ createResult.model }}</span>
           </div>
           <p class="tip">
             已自动填入到查询区域，可直接点击「查询任务状态」查看进度。
@@ -449,24 +507,14 @@ const handleQuery = async () => {
       <div class="card">
         <h2 class="card-title">2. 查询任务状态</h2>
 
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">Token 类型</span>
-            <select v-model="queryTokenType" class="select">
-              <option value="default">廉价版（¥0.12/次）</option>
-              <option value="premium">官方优质版（¥0.48/秒）</option>
-              <option value="original">Original 版（¥0.876/秒）</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span class="field-label">API 格式</span>
-            <select v-model="queryApiFormat" class="select">
-              <option value="v2">/v2/videos/generations</option>
-              <option value="v1">/v1/videos (OpenAI)</option>
-            </select>
-          </label>
-        </div>
+        <label class="field">
+          <span class="field-label">Token 类型</span>
+          <select v-model="queryTokenType" class="select">
+            <option value="default">廉价版</option>
+            <option value="premium">官方优质版（¥0.48/秒）</option>
+            <option value="original">Original 版（¥0.876/秒）</option>
+          </select>
+        </label>
 
         <label class="field">
           <span class="field-label">
@@ -487,6 +535,11 @@ const handleQuery = async () => {
 
         <div v-if="queryResult" class="result">
           <div class="result-row">
+            <span class="result-label">任务 ID：</span>
+            <code class="result-value">{{ queryResult.id }}</code>
+          </div>
+
+          <div class="result-row">
             <span class="result-label">状态：</span>
             <span class="status-pill" :data-status="queryResult.status">
               {{ queryResult.status }}
@@ -495,7 +548,7 @@ const handleQuery = async () => {
 
           <div class="result-row">
             <span class="result-label">进度：</span>
-            <span class="result-value">{{ queryResult.progress }}%</span>
+            <span class="result-value">{{ queryResult.progress || 0 }}%</span>
           </div>
 
           <div v-if="queryResult.model" class="result-row">
@@ -517,24 +570,20 @@ const handleQuery = async () => {
           <div v-if="queryResult.error" class="result-row">
             <span class="result-label">错误：</span>
             <div class="error-info">
-              <div><strong>代码：</strong>{{ queryResult.error.code }}</div>
-              <div><strong>信息：</strong>{{ queryResult.error.message }}</div>
+              <div v-if="typeof queryResult.error === 'object'">
+                <div v-if="queryResult.error.code"><strong>代码：</strong>{{ queryResult.error.code }}</div>
+                <div v-if="queryResult.error.message"><strong>信息：</strong>{{ queryResult.error.message }}</div>
+              </div>
+              <div v-else>{{ queryResult.error }}</div>
             </div>
           </div>
 
-          <!-- 视频链接（优先使用 url，其次 video_url，最后尝试 data.output） -->
-          <div
-            v-if="queryResult.url || queryResult.video_url || queryResult.data?.output"
-            class="result-row"
-          >
+          <!-- 视频链接（新接口返回 video_url） -->
+          <div v-if="queryResult.video_url" class="result-row">
             <span class="result-label">视频地址：</span>
             <a
               class="link"
-              :href="
-                queryResult.url ||
-                queryResult.video_url ||
-                queryResult.data?.output
-              "
+              :href="queryResult.video_url"
               target="_blank"
               rel="noopener"
             >

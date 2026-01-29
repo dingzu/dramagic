@@ -436,28 +436,39 @@ app.delete(`/api/${API_VERSION}/projects/:id`, async (req, res) => {
 });
 
 /**
- * ai.comfly.chat.sora-2
+ * Comfly Chat Sora-2 API（新版 /v1/videos 格式）
  *
  * 1. 创建视频生成任务
- *    POST /api/v1/ai/comfly/sora-2/generations
+ *    POST /api/v1/ai/comfly/sora-2/videos
  *
  * 2. 查询任务状态
- *    GET /api/v1/ai/comfly/sora-2/generations/:taskId
+ *    GET /api/v1/ai/comfly/sora-2/videos/:taskId
+ * 
+ * 返回格式：
+ * {
+ *   "id": "video_xxx",
+ *   "object": "video",
+ *   "model": "sora-2",
+ *   "status": "queued|in_progress|completed|failed",
+ *   "progress": 0,
+ *   "created_at": 1760679942,
+ *   "seconds": "15",
+ *   "size": "1280x720",
+ *   "error": null,
+ *   "video_url": ""
+ * }
  */
 
-// 创建视频生成任务
-app.post(`/api/${API_VERSION}/ai/comfly/sora-2/generations`, async (req, res, next) => {
+// 创建视频生成任务（新版 /v1/videos）
+app.post(`/api/${API_VERSION}/ai/comfly/sora-2/videos`, async (req, res, next) => {
   try {
     const {
       prompt,
-      token_type = 'default', // 'default' 或 'premium'
-      // 廉价版参数
-      aspect_ratio,
-      hd,
-      // 官方版参数
-      size,
-      // 通用参数
-      duration
+      token_type = 'default', // 'default', 'premium', 'original'
+      model = 'sora-2',
+      size = '1280x720',
+      seconds = '5',
+      watermark = false
     } = req.body || {};
 
     // 根据 token_type 选择 API Key
@@ -503,34 +514,23 @@ app.post(`/api/${API_VERSION}/ai/comfly/sora-2/generations`, async (req, res, ne
       });
     }
 
-    const url = `${COMFLY_BASE_URL}/v2/videos/generations`;
+    const url = `${COMFLY_BASE_URL}/v1/videos`;
 
-    // 根据 token_type 构建不同的请求体
-    const requestBody = {
-      prompt,
-      model: 'sora-2',
-      duration: duration || (token_type === 'premium' || token_type === 'original' ? '5' : '10')
-    };
+    // 使用 FormData 格式
+    const FormData = (await import('form-data')).default;
+    const formData = new FormData();
+    formData.append('model', model);
+    formData.append('prompt', prompt);
+    formData.append('size', size);
+    formData.append('seconds', String(seconds));
+    formData.append('watermark', String(watermark));
 
-    // 官方版和 Original 版使用 size 参数
-    if (token_type === 'premium' || token_type === 'original') {
-      requestBody.size = size || '1280x720';
-    } else {
-      // 廉价版使用 aspect_ratio 和 hd 参数
-      requestBody.aspect_ratio = aspect_ratio || '16:9';
-      requestBody.hd = hd || false;
-    }
-
-    const response = await axios.post(
-      url,
-      requestBody,
-      {
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
+    const response = await axios.post(url, formData, {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...formData.getHeaders()
       }
-    );
+    });
 
     return res.json({
       success: true,
@@ -543,7 +543,7 @@ app.post(`/api/${API_VERSION}/ai/comfly/sora-2/generations`, async (req, res, ne
     if (error.response) {
       return res.status(error.response.status || 500).json({
         success: false,
-        error: error.response.data?.error || 'Comfly 接口调用失败',
+        error: error.response.data?.error || error.response.data?.message || 'Comfly 接口调用失败',
         code: 'COMFLY_API_ERROR',
         details: error.response.data
       });
@@ -553,84 +553,7 @@ app.post(`/api/${API_VERSION}/ai/comfly/sora-2/generations`, async (req, res, ne
   }
 });
 
-// 查询任务状态
-app.get(`/api/${API_VERSION}/ai/comfly/sora-2/generations/:taskId`, async (req, res, next) => {
-  try {
-    const { taskId } = req.params;
-    const { token_type } = req.query; // 支持通过 query 参数指定 token 类型
-
-    if (!taskId) {
-      return res.status(400).json({
-        success: false,
-        error: 'taskId 为必填参数',
-        code: 'VALIDATION_ERROR'
-      });
-    }
-
-    // 根据 token_type 或 taskId 前缀判断使用哪个 API Key
-    let apiKey;
-    if (token_type === 'premium' || taskId.includes('video_')) {
-      // 官方版任务 ID 通常以 video_ 开头
-      apiKey = COMFLY_API_KEY_PREMIUM;
-      if (!apiKey) {
-        return res.status(500).json({
-          success: false,
-          error: 'COMFLY_API_KEY_PREMIUM（官方优质版）未配置',
-          code: 'CONFIG_ERROR'
-        });
-      }
-    } else if (token_type === 'original') {
-      // Original 版
-      apiKey = COMFLY_API_KEY_ORIGINAL;
-      if (!apiKey) {
-        return res.status(500).json({
-          success: false,
-          error: 'COMFLY_API_KEY_ORIGINAL（Original 版）未配置',
-          code: 'CONFIG_ERROR'
-        });
-      }
-    } else {
-      // 廉价版
-      apiKey = COMFLY_API_KEY;
-      if (!apiKey) {
-        return res.status(500).json({
-          success: false,
-          error: 'COMFLY_API_KEY（廉价版）未配置',
-          code: 'CONFIG_ERROR'
-        });
-      }
-    }
-
-    const url = `${COMFLY_BASE_URL}/v2/videos/generations/${encodeURIComponent(taskId)}`;
-
-    const response = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${apiKey}`
-      }
-    });
-
-    return res.json({
-      success: true,
-      data: response.data,
-      message: '任务查询成功'
-    });
-  } catch (error) {
-    console.error('查询 Comfly Sora-2 任务失败:', error.response?.data || error.message);
-
-    if (error.response) {
-      return res.status(error.response.status || 500).json({
-        success: false,
-        error: error.response.data?.error || 'Comfly 接口调用失败',
-        code: 'COMFLY_API_ERROR',
-        details: error.response.data
-      });
-    }
-
-    return next(error);
-  }
-});
-
-// 查询任务状态（OpenAI 格式 /v1/videos/{task_id}）
+// 查询任务状态（/v1/videos/:taskId）
 app.get(`/api/${API_VERSION}/ai/comfly/sora-2/videos/:taskId`, async (req, res, next) => {
   try {
     const { taskId } = req.params;
@@ -644,10 +567,9 @@ app.get(`/api/${API_VERSION}/ai/comfly/sora-2/videos/:taskId`, async (req, res, 
       });
     }
 
-    // 根据 token_type 或 taskId 前缀判断使用哪个 API Key
+    // 根据 token_type 选择 API Key
     let apiKey;
-    if (token_type === 'premium' || taskId.includes('video_')) {
-      // 官方版任务 ID 通常以 video_ 开头
+    if (token_type === 'premium') {
       apiKey = COMFLY_API_KEY_PREMIUM;
       if (!apiKey) {
         return res.status(500).json({
@@ -657,7 +579,6 @@ app.get(`/api/${API_VERSION}/ai/comfly/sora-2/videos/:taskId`, async (req, res, 
         });
       }
     } else if (token_type === 'original') {
-      // Original 版
       apiKey = COMFLY_API_KEY_ORIGINAL;
       if (!apiKey) {
         return res.status(500).json({
@@ -667,7 +588,6 @@ app.get(`/api/${API_VERSION}/ai/comfly/sora-2/videos/:taskId`, async (req, res, 
         });
       }
     } else {
-      // 廉价版
       apiKey = COMFLY_API_KEY;
       if (!apiKey) {
         return res.status(500).json({
@@ -689,15 +609,15 @@ app.get(`/api/${API_VERSION}/ai/comfly/sora-2/videos/:taskId`, async (req, res, 
     return res.json({
       success: true,
       data: response.data,
-      message: '任务查询成功（OpenAI 格式）'
+      message: '任务查询成功'
     });
   } catch (error) {
-    console.error('查询 Comfly Sora-2 任务失败（OpenAI 格式）:', error.response?.data || error.message);
+    console.error('查询 Comfly Sora-2 任务失败:', error.response?.data || error.message);
 
     if (error.response) {
       return res.status(error.response.status || 500).json({
         success: false,
-        error: error.response.data?.error || 'Comfly 接口调用失败',
+        error: error.response.data?.error || error.response.data?.message || 'Comfly 接口调用失败',
         code: 'COMFLY_API_ERROR',
         details: error.response.data
       });

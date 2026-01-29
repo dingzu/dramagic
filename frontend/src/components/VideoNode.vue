@@ -18,6 +18,7 @@ const elapsedSeconds = ref(0)
 const startTime = ref(0)
 const timer = ref(null)
 const localPrompt = ref(props.data.prompt || '')
+const localSource = ref(props.data.source || 'fal') // 'fal' 或 'comfly-premium'
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
 
@@ -51,8 +52,19 @@ const duration = computed(() => {
   return parseInt(props.data.duration) || 4
 })
 
-// 计算费用：使用 pricing 配置的真实价格
+// 当前来源
+const source = computed(() => {
+  return props.data.source || localSource.value || 'fal'
+})
+
+// 计算费用：根据来源使用不同的 pricing 配置
 const costInfo = computed(() => {
+  if (source.value === 'comfly-premium') {
+    return pricing.calculateCost('comfly', 'premium', duration.value)
+  }
+  if (source.value === 'comfly-original') {
+    return pricing.calculateCost('comfly', 'original', duration.value)
+  }
   return pricing.calculateCost('fal', 'sora-2', duration.value)
 })
 
@@ -64,6 +76,13 @@ const costUSD = computed(() => {
 // 人民币价格
 const costCNY = computed(() => {
   return costInfo.value?.priceCNY?.toFixed(2) || '0.00'
+})
+
+// 来源显示名称
+const sourceLabel = computed(() => {
+  if (source.value === 'comfly-premium') return 'Comfly 官方'
+  if (source.value === 'comfly-original') return 'Comfly Original'
+  return 'fal.ai'
 })
 
 // 倒计时显示文本
@@ -219,6 +238,14 @@ watch(
   }
 )
 
+// 同步 source 来源
+watch(
+  () => props.data?.source,
+  (v) => {
+    localSource.value = v || 'fal'
+  }
+)
+
 // 如果加载项目后才拿到 requestId/status，也要自动恢复轮询
 watch(
   () => [props.data?.status, props.data?.requestId, props.data?.startTime],
@@ -246,41 +273,75 @@ const generate = async () => {
   elapsedSeconds.value = 0
   startTime.value = 0
   
+  // 保存当前使用的来源
+  const currentSource = localSource.value
+  
   emit('update:data', props.id, { 
     status: 'creating',
     videoUrl: null,
     requestId: null,
     error: '', // 明确清除错误
-    resultData: null // 清除旧的详情数据
+    resultData: null, // 清除旧的详情数据
+    source: currentSource // 保存来源
   })
 
   try {
-    const resp = await fetch(`${apiBaseUrl}/api/v1/ai/fal/sora-2/text-to-video`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt: localPrompt.value,
-        resolution: '720p',
-        aspect_ratio: '16:9',
-        duration: duration.value,
-        model: 'sora-2'
+    let resp, data, requestId
+
+    if (currentSource === 'comfly-premium' || currentSource === 'comfly-original') {
+      // Comfly Chat（官方优质版 / Original版）
+      const tokenType = currentSource === 'comfly-premium' ? 'premium' : 'original'
+      resp = await fetch(`${apiBaseUrl}/api/v1/ai/comfly/sora-2/videos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: localPrompt.value,
+          model: 'sora-2',
+          size: '1280x720',
+          seconds: String(duration.value),
+          watermark: false,
+          token_type: tokenType
+        })
       })
-    })
 
-    const data = await resp.json()
+      data = await resp.json()
 
-    if (!resp.ok || !data.success) {
-      throw new Error(data.error || data.message || '创建任务失败')
+      if (!resp.ok || !data.success) {
+        throw new Error(data.error || data.message || '创建任务失败')
+      }
+
+      requestId = data.data?.id // Comfly 返回的是 id
+    } else {
+      // fal.ai
+      resp = await fetch(`${apiBaseUrl}/api/v1/ai/fal/sora-2/text-to-video`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: localPrompt.value,
+          resolution: '720p',
+          aspect_ratio: '16:9',
+          duration: duration.value,
+          model: 'sora-2'
+        })
+      })
+
+      data = await resp.json()
+
+      if (!resp.ok || !data.success) {
+        throw new Error(data.error || data.message || '创建任务失败')
+      }
+
+      requestId = data.data?.request_id // fal 返回的是 request_id
     }
 
-    const requestId = data.data?.request_id
     const startTs = Date.now()
 
     emit('update:data', props.id, { 
       status: 'queued',
       requestId,
       startTime: startTs,
-      resultData: data // 保存创建结果
+      resultData: data, // 保存创建结果
+      source: currentSource
     })
 
     // 开始计时
@@ -297,15 +358,33 @@ const generate = async () => {
 
 const pollStatus = async (requestId) => {
   try {
-    const resp = await fetch(`${apiBaseUrl}/api/v1/ai/fal/sora-2/text-to-video/${requestId}`)
-    const data = await resp.json()
+    const currentSource = props.data?.source || 'fal'
+    let resp, data, status, videoUrl
 
-    if (!resp.ok || !data.success) {
-      throw new Error(data.error || '查询失败')
+    if (currentSource === 'comfly-premium' || currentSource === 'comfly-original') {
+      // Comfly Chat（官方优质版 / Original版）查询
+      const tokenType = currentSource === 'comfly-premium' ? 'premium' : 'original'
+      resp = await fetch(`${apiBaseUrl}/api/v1/ai/comfly/sora-2/videos/${requestId}?token_type=${tokenType}`)
+      data = await resp.json()
+
+      if (!resp.ok || !data.success) {
+        throw new Error(data.error || '查询失败')
+      }
+
+      status = data.data?.status
+      videoUrl = data.data?.video_url // Comfly 返回的是 video_url
+    } else {
+      // fal.ai 查询
+      resp = await fetch(`${apiBaseUrl}/api/v1/ai/fal/sora-2/text-to-video/${requestId}`)
+      data = await resp.json()
+
+      if (!resp.ok || !data.success) {
+        throw new Error(data.error || '查询失败')
+      }
+
+      status = data.data?.status
+      videoUrl = data.data?.video?.url // fal 返回的是 video.url
     }
-
-    const status = data.data?.status
-    const videoUrl = data.data?.video?.url
 
     emit('update:data', props.id, { 
       status,
@@ -342,9 +421,24 @@ const pollStatus = async (requestId) => {
     <div class="node-header" @mousedown="startDrag">
       <span class="node-icon">🎬</span>
       <span class="node-title">Sora 2 视频生成</span>
+      <span class="source-badge" :class="source">{{ sourceLabel }}</span>
       <button class="delete-btn" @click.stop="handleDelete">×</button>
     </div>
     <div class="node-content">
+      <div class="field">
+        <label>来源</label>
+        <select 
+          :value="localSource" 
+          @change="localSource = $event.target.value; emit('update:data', id, { source: $event.target.value })"
+          @click.stop
+          :disabled="isButtonDisabled"
+        >
+          <option value="fal">fal.ai（¥0.73/秒）</option>
+          <option value="comfly-premium">Comfly 官方优质版（¥0.48/秒）</option>
+          <option value="comfly-original">Comfly Original（¥0.88/秒）</option>
+        </select>
+      </div>
+
       <div class="field">
         <label>描述词</label>
         <textarea 
@@ -365,6 +459,7 @@ const pollStatus = async (requestId) => {
           :disabled="isButtonDisabled"
         >
           <option value="4">4秒</option>
+          <option value="5">5秒</option>
           <option value="8">8秒</option>
           <option value="12">12秒</option>
         </select>
@@ -472,6 +567,25 @@ const pollStatus = async (requestId) => {
   font-size: 14px;
   font-weight: 600;
   color: #1e293b;
+}
+
+.source-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.source-badge.comfly-premium {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.source-badge.comfly-original {
+  background: #fce7f3;
+  color: #9d174d;
 }
 
 .delete-btn {
