@@ -6,6 +6,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { fal } from '@fal-ai/client';
 import { getDbPool, initDb } from './db.js';
+import pricing from '../../config/pricing.js';
 
 // 加载环境变量
 dotenv.config();
@@ -189,6 +190,73 @@ app.get('/api/v1/example', (req, res) => {
     data: {
       message: '这是一个示例 API 接口'
     }
+  });
+});
+
+/**
+ * 价格配置 API
+ * 
+ * 1. 获取所有价格列表
+ *    GET /api/v1/pricing
+ * 
+ * 2. 获取汇率
+ *    GET /api/v1/pricing/exchange-rate
+ * 
+ * 3. 计算费用
+ *    GET /api/v1/pricing/calculate?provider=fal&model=sora-2&duration=10
+ */
+
+// 获取所有价格列表
+app.get(`/api/${API_VERSION}/pricing`, (req, res) => {
+  const priceList = pricing.getAllPriceList();
+  return res.json({
+    success: true,
+    data: {
+      exchangeRate: pricing.EXCHANGE_RATES.USD_TO_CNY,
+      prices: priceList
+    },
+    message: '获取价格列表成功'
+  });
+});
+
+// 获取汇率
+app.get(`/api/${API_VERSION}/pricing/exchange-rate`, (req, res) => {
+  return res.json({
+    success: true,
+    data: {
+      USD_TO_CNY: pricing.EXCHANGE_RATES.USD_TO_CNY
+    },
+    message: '获取汇率成功'
+  });
+});
+
+// 计算费用
+app.get(`/api/${API_VERSION}/pricing/calculate`, (req, res) => {
+  const { provider, model, duration } = req.query;
+  
+  if (!provider || !model) {
+    return res.status(400).json({
+      success: false,
+      error: 'provider 和 model 为必填参数',
+      code: 'VALIDATION_ERROR'
+    });
+  }
+  
+  const durationNum = duration ? parseInt(duration) : 1;
+  const cost = pricing.calculateCost(provider, model, durationNum);
+  
+  if (!cost) {
+    return res.status(404).json({
+      success: false,
+      error: `未找到 ${provider}/${model} 的价格配置`,
+      code: 'NOT_FOUND'
+    });
+  }
+  
+  return res.json({
+    success: true,
+    data: cost,
+    message: '费用计算成功'
   });
 });
 

@@ -1,5 +1,6 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import pricing from '../../../config/pricing.js'
 
 const props = defineProps({
   id: Number,
@@ -50,9 +51,19 @@ const duration = computed(() => {
   return parseInt(props.data.duration) || 4
 })
 
-// 计算费用：按视频长度计费，0.1刀/秒
-const cost = computed(() => {
-  return (duration.value * 0.1).toFixed(2)
+// 计算费用：使用 pricing 配置的真实价格
+const costInfo = computed(() => {
+  return pricing.calculateCost('fal', 'sora-2', duration.value)
+})
+
+// 美元价格
+const costUSD = computed(() => {
+  return costInfo.value?.priceUSD?.toFixed(2) || '0.00'
+})
+
+// 人民币价格
+const costCNY = computed(() => {
+  return costInfo.value?.priceCNY?.toFixed(2) || '0.00'
 })
 
 // 倒计时显示文本
@@ -375,7 +386,7 @@ const pollStatus = async (requestId) => {
         <div class="status-indicator" :style="{ background: statusColor }"></div>
         <span class="status-text">{{ statusText }}</span>
         <button v-if="data.resultData" class="detail-btn" @click.stop="$emit('show-details', data.resultData)">详情</button>
-        <span class="cost-text">${{ cost }}</span>
+        <span class="cost-text">${{ costUSD }} / ¥{{ costCNY }}</span>
       </div>
 
       <!-- 倒计时进度条 -->
