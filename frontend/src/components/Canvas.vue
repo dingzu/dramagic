@@ -194,6 +194,7 @@ defineExpose({
       :y="node.y"
       :data="node.data"
       :selected="selectedNodeId === node.id"
+      :project-id="props.projectId"
       @update:position="updateNodePosition"
       @update:data="updateNodeData"
       @select="selectNode"

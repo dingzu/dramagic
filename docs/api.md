@@ -328,4 +328,304 @@
 
 ---
 
+## 阿里云 OSS 存储 API
+
+### 8. 获取 OSS 状态
+
+- **路径**: `GET /api/v1/oss/status`
+- **描述**: 获取 OSS 配置状态
+- **认证**: 无
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "configured": true,
+    "region": "oss-cn-shanghai",
+    "bucket": "dramagic-videos",
+    "hasCustomDomain": false,
+    "customDomain": null
+  },
+  "message": "OSS 状态获取成功"
+}
+```
+
+---
+
+### 9. 从 URL 上传视频到 OSS
+
+- **路径**: `POST /api/v1/oss/upload-from-url`
+- **描述**: 从指定 URL 下载视频并上传到阿里云 OSS
+- **认证**: 无
+- **请求参数（JSON Body）**:
+  - `url` (string, 必填): 源视频 URL
+  - `folder` (string, 可选): OSS 存储文件夹，默认 `"videos"`
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "ossUrl": "https://dramagic-videos.oss-cn-shanghai.aliyuncs.com/videos/2026/01/29/abc123.mp4",
+    "ossPath": "videos/2026/01/29/abc123.mp4",
+    "size": 12345678,
+    "contentType": "video/mp4"
+  },
+  "message": "视频上传 OSS 成功"
+}
+```
+
+**错误响应示例**:
+```json
+{
+  "success": false,
+  "error": "OSS 未配置，请设置相关环境变量",
+  "code": "OSS_NOT_CONFIGURED"
+}
+```
+
+---
+
+### 10. 删除 OSS 文件
+
+- **路径**: `DELETE /api/v1/oss/files/:ossPath`
+- **描述**: 删除 OSS 中的指定文件
+- **路径参数**:
+  - `ossPath` (string, 必填): OSS 文件路径（如 `videos/2026/01/29/abc123.mp4`）
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "ossPath": "videos/2026/01/29/abc123.mp4"
+  },
+  "message": "文件删除成功"
+}
+```
+
+---
+
+### 11. 获取签名 URL
+
+- **路径**: `GET /api/v1/oss/signed-url`
+- **描述**: 生成带签名的临时访问 URL（用于私有 Bucket）
+- **Query 参数**:
+  - `ossPath` (string, 必填): OSS 文件路径
+  - `expires` (number, 可选): 过期时间（秒），默认 `3600`
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "url": "https://dramagic-videos.oss-cn-shanghai.aliyuncs.com/videos/...?OSSAccessKeyId=...&Expires=...&Signature=...",
+    "expiresIn": 3600
+  },
+  "message": "签名 URL 生成成功"
+}
+```
+
+---
+
+### 12. 列出 OSS 文件
+
+- **路径**: `GET /api/v1/oss/files`
+- **描述**: 列出 OSS 指定目录下的文件
+- **Query 参数**:
+  - `prefix` (string, 可选): 目录前缀，默认 `"videos/"`
+  - `maxKeys` (number, 可选): 最大返回数量，默认 `100`
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "files": [
+      {
+        "name": "videos/2026/01/29/abc123.mp4",
+        "size": 12345678,
+        "lastModified": "2026-01-29T12:00:00.000Z",
+        "url": "https://..."
+      }
+    ],
+    "count": 1
+  },
+  "message": "文件列表获取成功"
+}
+```
+
+---
+
+## 视频任务管理 API
+
+### 13. 获取任务列表
+
+- **路径**: `GET /api/v1/video-tasks`
+- **描述**: 获取视频生成任务列表
+- **Query 参数**:
+  - `user_id` (string, 可选): 用户 ID，默认 `"admin"`
+  - `project_id` (number, 可选): 按项目筛选
+  - `limit` (number, 可选): 每页数量，默认 `50`
+  - `offset` (number, 可选): 偏移量，默认 `0`
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "tasks": [
+      {
+        "id": 1,
+        "user_id": "admin",
+        "project_id": 5,
+        "prompt": "A cat playing piano",
+        "duration": 4,
+        "source": "fal",
+        "source_task_id": "abc123",
+        "source_video_url": "https://...",
+        "oss_url": "https://bucket.oss-cn-shanghai.aliyuncs.com/videos/...",
+        "oss_path": "videos/2026/01/29/xxx.mp4",
+        "status": "completed",
+        "cost_usd": "0.40",
+        "cost_cny": "2.90",
+        "created_at": "2026-01-29T12:00:00.000Z",
+        "completed_at": "2026-01-29T12:02:00.000Z"
+      }
+    ],
+    "total": 10,
+    "limit": 50,
+    "offset": 0
+  },
+  "message": "任务列表获取成功"
+}
+```
+
+---
+
+### 14. 获取单个任务
+
+- **路径**: `GET /api/v1/video-tasks/:id`
+- **描述**: 获取单个任务详情
+- **路径参数**:
+  - `id` (number, 必填): 任务 ID
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "user_id": "admin",
+    "prompt": "A cat playing piano",
+    ...
+  },
+  "message": "任务获取成功"
+}
+```
+
+---
+
+### 15. 创建任务记录
+
+- **路径**: `POST /api/v1/video-tasks`
+- **描述**: 创建视频生成任务记录
+- **请求参数（JSON Body）**:
+  - `user_id` (string, 可选): 用户 ID，默认 `"admin"`
+  - `project_id` (number, 可选): 关联项目 ID
+  - `prompt` (string, 必填): 生成描述词
+  - `duration` (number, 可选): 时长，默认 `4`
+  - `source` (string, 必填): 来源（fal/comfly-premium/comfly-original）
+  - `source_task_id` (string, 可选): 源平台任务 ID
+  - `cost_usd` (number, 可选): 费用（美元）
+  - `cost_cny` (number, 可选): 费用（人民币）
+  - `status` (string, 可选): 状态，默认 `"pending"`
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "user_id": "admin",
+    "prompt": "...",
+    "status": "pending",
+    ...
+  },
+  "message": "任务创建成功"
+}
+```
+
+---
+
+### 16. 更新任务
+
+- **路径**: `PUT /api/v1/video-tasks/:id`
+- **描述**: 更新任务状态和视频 URL
+- **路径参数**:
+  - `id` (number, 必填): 任务 ID
+- **请求参数（JSON Body）**:
+  - `source_video_url` (string, 可选): 源平台视频 URL
+  - `oss_url` (string, 可选): OSS URL
+  - `oss_path` (string, 可选): OSS 文件路径
+  - `status` (string, 可选): 状态
+  - `error` (string, 可选): 错误信息
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "status": "completed",
+    "oss_url": "https://...",
+    ...
+  },
+  "message": "任务更新成功"
+}
+```
+
+---
+
+### 17. 保存视频（组合接口）
+
+- **路径**: `POST /api/v1/video-tasks/save-video`
+- **描述**: 上传视频到 OSS 并创建任务记录（一步完成）
+- **请求参数（JSON Body）**:
+  - `user_id` (string, 可选): 用户 ID，默认 `"admin"`
+  - `project_id` (number, 可选): 关联项目 ID
+  - `prompt` (string, 必填): 生成描述词
+  - `duration` (number, 可选): 时长，默认 `4`
+  - `source` (string, 必填): 来源
+  - `source_task_id` (string, 可选): 源平台任务 ID
+  - `source_video_url` (string, 必填): 源视频 URL
+  - `cost_usd` (number, 可选): 费用（美元）
+  - `cost_cny` (number, 可选): 费用（人民币）
+
+**成功响应示例**:
+```json
+{
+  "success": true,
+  "data": {
+    "task": {
+      "id": 1,
+      "oss_url": "https://...",
+      "status": "completed",
+      ...
+    },
+    "ossUploaded": true,
+    "ossError": null
+  },
+  "message": "视频已保存到 OSS"
+}
+```
+
+**说明**:
+- 如果 OSS 未配置，仅创建任务记录，不上传视频
+- 返回 `ossUploaded` 表示是否成功上传到 OSS
+- 返回 `ossError` 为 OSS 上传失败时的错误信息
+
+---
+
 （更多接口待补充）

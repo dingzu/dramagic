@@ -7,7 +7,8 @@ const props = defineProps({
   x: Number,
   y: Number,
   data: Object,
-  selected: Boolean
+  selected: Boolean,
+  projectId: [Number, String]
 })
 
 const emit = defineEmits(['update:position', 'update:data', 'select', 'delete', 'show-details', 'drag-end'])
@@ -356,6 +357,57 @@ const generate = async () => {
   }
 }
 
+// 保存视频到 OSS 和数据库
+const saveVideoToOss = async (videoUrl, requestId) => {
+  try {
+    const currentSource = props.data?.source || 'fal'
+    const cost = costInfo.value
+    
+    const resp = await fetch(`${apiBaseUrl}/api/v1/video-tasks/save-video`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: 'admin',
+        project_id: props.projectId || null,
+        prompt: localPrompt.value || props.data?.prompt,
+        duration: duration.value,
+        source: currentSource,
+        source_task_id: requestId,
+        source_video_url: videoUrl,
+        cost_usd: cost?.priceUSD || null,
+        cost_cny: cost?.priceCNY || null
+      })
+    })
+
+    const data = await resp.json()
+    
+    if (data.success && data.data?.task?.oss_url) {
+      // 更新节点使用 OSS URL（公共读 Bucket）
+      emit('update:data', props.id, { 
+        ossUrl: data.data.task.oss_url,
+        ossPath: data.data.task.oss_path,
+        taskId: data.data.task.id
+      })
+      console.log('✅ 视频已保存到 OSS:', data.data.task.oss_url)
+    } else if (data.success) {
+      console.log('📝 任务已记录（OSS 未配置或上传失败）')
+    }
+  } catch (err) {
+    console.error('保存视频失败:', err.message)
+    // 不影响主流程，仅记录错误
+  }
+}
+
+// 获取视频预览 URL（优先使用 OSS URL）
+const previewVideoUrl = computed(() => {
+  // 优先使用 OSS URL
+  if (props.data?.ossUrl) {
+    return props.data.ossUrl
+  }
+  // 其次使用原始视频 URL
+  return props.data?.videoUrl || null
+})
+
 const pollStatus = async (requestId) => {
   try {
     const currentSource = props.data?.source || 'fal'
@@ -396,6 +448,11 @@ const pollStatus = async (requestId) => {
       if (timer.value) {
         clearInterval(timer.value)
         timer.value = null
+      }
+
+      // 视频生成完成，自动保存到 OSS
+      if (status === 'completed' && videoUrl) {
+        saveVideoToOss(videoUrl, requestId)
       }
     }
   } catch (err) {
@@ -495,8 +552,10 @@ const pollStatus = async (requestId) => {
         </div>
       </div>
 
-      <div v-if="data.videoUrl" class="video-preview">
-        <video :src="data.videoUrl" controls></video>
+      <div v-if="previewVideoUrl" class="video-preview">
+        <!-- 使用 key 强制视频在 URL 变化时重新加载 -->
+        <video :key="previewVideoUrl" :src="previewVideoUrl" controls></video>
+        <div v-if="data.ossUrl" class="oss-badge">☁️ 已存储到云端</div>
       </div>
 
       <div v-if="data.error" class="error-message">
@@ -736,8 +795,10 @@ textarea:focus, select:focus {
   flex: 1;
   min-height: 120px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
 .video-preview video {
@@ -745,6 +806,18 @@ textarea:focus, select:focus {
   height: 100%;
   max-height: 300px;
   object-fit: contain;
+}
+
+.oss-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(16, 185, 129, 0.9);
+  color: white;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .countdown-container {

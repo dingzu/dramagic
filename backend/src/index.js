@@ -6,7 +6,16 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import { fal } from '@fal-ai/client';
 import { getDbPool, initDb } from './db.js';
-import pricing from '../../config/pricing.js';
+import pricing from './pricing.js';
+import {
+  initOssClient,
+  isOssConfigured,
+  uploadFromUrl,
+  deleteFile,
+  getSignedUrl,
+  listFiles,
+  getOssStatus
+} from './oss.js';
 
 // 加载环境变量
 dotenv.config();
@@ -43,6 +52,9 @@ if (FAL_KEY) {
     credentials: FAL_KEY
   });
 }
+
+// 阿里云 OSS 初始化
+initOssClient();
 
 // 创建 HTTP 服务器和 Socket.IO
 const httpServer = createServer(app);
@@ -760,6 +772,567 @@ app.get(`/api/${API_VERSION}/ai/fal/sora-2/text-to-video/:requestId`, async (req
       code: 'FAL_API_ERROR',
       details: error
     });
+  }
+});
+
+/**
+ * 阿里云 OSS 接口
+ * 
+ * 1. 获取 OSS 状态
+ *    GET /api/v1/oss/status
+ * 
+ * 2. 上传视频（从 URL）
+ *    POST /api/v1/oss/upload-from-url
+ * 
+ * 3. 删除文件
+ *    DELETE /api/v1/oss/files/:ossPath
+ * 
+ * 4. 获取签名 URL
+ *    GET /api/v1/oss/signed-url
+ * 
+ * 5. 列出文件
+ *    GET /api/v1/oss/files
+ */
+
+// 获取 OSS 状态
+app.get(`/api/${API_VERSION}/oss/status`, (req, res) => {
+  const status = getOssStatus();
+  return res.json({
+    success: true,
+    data: status,
+    message: 'OSS 状态获取成功'
+  });
+});
+
+// 从 URL 上传视频到 OSS
+app.post(`/api/${API_VERSION}/oss/upload-from-url`, async (req, res, next) => {
+  try {
+    if (!isOssConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'OSS 未配置，请设置相关环境变量',
+        code: 'OSS_NOT_CONFIGURED'
+      });
+    }
+
+    const { url, folder = 'videos' } = req.body || {};
+
+    if (!url) {
+      return res.status(400).json({
+        success: false,
+        error: 'url 为必填参数',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+
+    console.log(`📥 收到上传请求: ${url.substring(0, 100)}...`);
+
+    const result = await uploadFromUrl(url, folder);
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error || '上传失败',
+        code: 'OSS_UPLOAD_ERROR'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        ossUrl: result.ossUrl,
+        ossPath: result.ossPath,
+        size: result.size,
+        contentType: result.contentType
+      },
+      message: '视频上传 OSS 成功'
+    });
+  } catch (error) {
+    console.error('上传视频到 OSS 失败:', error.message);
+    return next(error);
+  }
+});
+
+// 删除 OSS 文件
+app.delete(`/api/${API_VERSION}/oss/files/:ossPath(*)`, async (req, res, next) => {
+  try {
+    if (!isOssConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'OSS 未配置',
+        code: 'OSS_NOT_CONFIGURED'
+      });
+    }
+
+    const { ossPath } = req.params;
+
+    if (!ossPath) {
+      return res.status(400).json({
+        success: false,
+        error: 'ossPath 为必填参数',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+
+    const result = await deleteFile(ossPath);
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error || '删除失败',
+        code: 'OSS_DELETE_ERROR'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: { ossPath },
+      message: '文件删除成功'
+    });
+  } catch (error) {
+    console.error('删除 OSS 文件失败:', error.message);
+    return next(error);
+  }
+});
+
+// 获取签名 URL（用于私有 Bucket）
+app.get(`/api/${API_VERSION}/oss/signed-url`, async (req, res, next) => {
+  try {
+    if (!isOssConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'OSS 未配置',
+        code: 'OSS_NOT_CONFIGURED'
+      });
+    }
+
+    const { ossPath, expires = 3600 } = req.query;
+
+    if (!ossPath) {
+      return res.status(400).json({
+        success: false,
+        error: 'ossPath 为必填参数',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+
+    const result = await getSignedUrl(ossPath, parseInt(expires));
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error || '生成签名 URL 失败',
+        code: 'OSS_SIGNED_URL_ERROR'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        url: result.url,
+        expiresIn: result.expiresIn
+      },
+      message: '签名 URL 生成成功'
+    });
+  } catch (error) {
+    console.error('生成签名 URL 失败:', error.message);
+    return next(error);
+  }
+});
+
+// 列出 OSS 文件
+app.get(`/api/${API_VERSION}/oss/files`, async (req, res, next) => {
+  try {
+    if (!isOssConfigured()) {
+      return res.status(500).json({
+        success: false,
+        error: 'OSS 未配置',
+        code: 'OSS_NOT_CONFIGURED'
+      });
+    }
+
+    const { prefix = 'videos/', maxKeys = 100 } = req.query;
+
+    const result = await listFiles(prefix, parseInt(maxKeys));
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        error: result.error || '列出文件失败',
+        code: 'OSS_LIST_ERROR'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        files: result.files,
+        count: result.files.length
+      },
+      message: '文件列表获取成功'
+    });
+  } catch (error) {
+    console.error('列出 OSS 文件失败:', error.message);
+    return next(error);
+  }
+});
+
+/**
+ * 视频任务管理 API
+ * 
+ * 1. 获取任务列表
+ *    GET /api/v1/video-tasks
+ * 
+ * 2. 获取单个任务
+ *    GET /api/v1/video-tasks/:id
+ * 
+ * 3. 创建任务记录
+ *    POST /api/v1/video-tasks
+ * 
+ * 4. 更新任务（完成时上传 OSS）
+ *    PUT /api/v1/video-tasks/:id
+ * 
+ * 5. 保存视频（组合接口：上传 OSS + 创建/更新任务记录）
+ *    POST /api/v1/video-tasks/save-video
+ */
+
+// 获取任务列表
+app.get(`/api/${API_VERSION}/video-tasks`, async (req, res, next) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  try {
+    const { user_id = 'admin', project_id, limit = 50, offset = 0 } = req.query;
+
+    let query = `
+      SELECT id, user_id, project_id, prompt, duration, source, 
+             source_task_id, source_video_url, oss_url, oss_path, 
+             status, error, cost_usd, cost_cny, created_at, completed_at
+      FROM video_tasks
+      WHERE user_id = $1
+    `;
+    const params = [user_id];
+    let paramIdx = 2;
+
+    if (project_id) {
+      query += ` AND project_id = $${paramIdx++}`;
+      params.push(project_id);
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
+    params.push(parseInt(limit), parseInt(offset));
+
+    const pool = getDbPool();
+    const { rows } = await pool.query(query, params);
+
+    // 获取总数
+    let countQuery = `SELECT COUNT(*) as total FROM video_tasks WHERE user_id = $1`;
+    const countParams = [user_id];
+    if (project_id) {
+      countQuery += ` AND project_id = $2`;
+      countParams.push(project_id);
+    }
+    const countResult = await pool.query(countQuery, countParams);
+    const total = parseInt(countResult.rows[0]?.total || 0);
+
+    return res.json({
+      success: true,
+      data: {
+        tasks: rows,
+        total,
+        limit: parseInt(limit),
+        offset: parseInt(offset)
+      },
+      message: '任务列表获取成功'
+    });
+  } catch (error) {
+    console.error('获取任务列表失败:', error.message);
+    return next(error);
+  }
+});
+
+// 获取单个任务
+app.get(`/api/${API_VERSION}/video-tasks/:id`, async (req, res, next) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'id 不合法',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+
+    const pool = getDbPool();
+    const { rows } = await pool.query(
+      `SELECT * FROM video_tasks WHERE id = $1`,
+      [id]
+    );
+
+    if (!rows[0]) {
+      return res.status(404).json({
+        success: false,
+        error: '任务不存在',
+        code: 'NOT_FOUND'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: rows[0],
+      message: '任务获取成功'
+    });
+  } catch (error) {
+    console.error('获取任务失败:', error.message);
+    return next(error);
+  }
+});
+
+// 创建任务记录
+app.post(`/api/${API_VERSION}/video-tasks`, async (req, res, next) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  try {
+    const {
+      user_id = 'admin',
+      project_id,
+      prompt,
+      duration = 4,
+      source,
+      source_task_id,
+      cost_usd,
+      cost_cny,
+      status = 'pending'
+    } = req.body || {};
+
+    if (!prompt || !source) {
+      return res.status(400).json({
+        success: false,
+        error: 'prompt 和 source 为必填参数',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+
+    const pool = getDbPool();
+    const { rows } = await pool.query(
+      `INSERT INTO video_tasks 
+       (user_id, project_id, prompt, duration, source, source_task_id, cost_usd, cost_cny, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [user_id, project_id || null, prompt, duration, source, source_task_id || null, cost_usd || null, cost_cny || null, status]
+    );
+
+    return res.status(201).json({
+      success: true,
+      data: rows[0],
+      message: '任务创建成功'
+    });
+  } catch (error) {
+    console.error('创建任务失败:', error.message);
+    return next(error);
+  }
+});
+
+// 更新任务
+app.put(`/api/${API_VERSION}/video-tasks/:id`, async (req, res, next) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'id 不合法',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+
+    const {
+      source_video_url,
+      oss_url,
+      oss_path,
+      status,
+      error: taskError
+    } = req.body || {};
+
+    const updates = [];
+    const params = [];
+    let i = 1;
+
+    if (source_video_url !== undefined) {
+      updates.push(`source_video_url = $${i++}`);
+      params.push(source_video_url);
+    }
+    if (oss_url !== undefined) {
+      updates.push(`oss_url = $${i++}`);
+      params.push(oss_url);
+    }
+    if (oss_path !== undefined) {
+      updates.push(`oss_path = $${i++}`);
+      params.push(oss_path);
+    }
+    if (status !== undefined) {
+      updates.push(`status = $${i++}`);
+      params.push(status);
+      if (status === 'completed') {
+        updates.push(`completed_at = NOW()`);
+      }
+    }
+    if (taskError !== undefined) {
+      updates.push(`error = $${i++}`);
+      params.push(taskError);
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: '没有需要更新的字段',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+
+    params.push(id);
+    const pool = getDbPool();
+    const { rows } = await pool.query(
+      `UPDATE video_tasks SET ${updates.join(', ')} WHERE id = $${i} RETURNING *`,
+      params
+    );
+
+    if (!rows[0]) {
+      return res.status(404).json({
+        success: false,
+        error: '任务不存在',
+        code: 'NOT_FOUND'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: rows[0],
+      message: '任务更新成功'
+    });
+  } catch (error) {
+    console.error('更新任务失败:', error.message);
+    return next(error);
+  }
+});
+
+// 保存视频（组合接口：上传 OSS + 创建任务记录）
+app.post(`/api/${API_VERSION}/video-tasks/save-video`, async (req, res, next) => {
+  const ok = await ensureDbReady();
+  if (!ok) {
+    return res.status(500).json({
+      success: false,
+      error: '数据库未配置或不可用',
+      code: 'DB_NOT_READY'
+    });
+  }
+
+  try {
+    const {
+      user_id = 'admin',
+      project_id,
+      prompt,
+      duration = 4,
+      source,
+      source_task_id,
+      source_video_url,
+      cost_usd,
+      cost_cny
+    } = req.body || {};
+
+    if (!prompt || !source || !source_video_url) {
+      return res.status(400).json({
+        success: false,
+        error: 'prompt, source, source_video_url 为必填参数',
+        code: 'VALIDATION_ERROR'
+      });
+    }
+
+    let ossUrl = null;
+    let ossPath = null;
+    let ossError = null;
+
+    // 尝试上传到 OSS
+    if (isOssConfigured()) {
+      console.log(`📥 开始保存视频到 OSS: ${source_video_url.substring(0, 80)}...`);
+      const ossResult = await uploadFromUrl(source_video_url, 'videos');
+      
+      if (ossResult.success) {
+        ossUrl = ossResult.ossUrl;
+        ossPath = ossResult.ossPath;
+        console.log(`✅ 视频已保存到 OSS: ${ossUrl}`);
+      } else {
+        ossError = ossResult.error;
+        console.warn(`⚠️ OSS 上传失败（将仅保存源 URL）: ${ossError}`);
+      }
+    } else {
+      console.log('⚠️ OSS 未配置，仅保存任务记录（不上传）');
+    }
+
+    // 创建任务记录
+    const pool = getDbPool();
+    const { rows } = await pool.query(
+      `INSERT INTO video_tasks 
+       (user_id, project_id, prompt, duration, source, source_task_id, source_video_url, oss_url, oss_path, cost_usd, cost_cny, status, completed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'completed', NOW())
+       RETURNING *`,
+      [
+        user_id,
+        project_id || null,
+        prompt,
+        duration,
+        source,
+        source_task_id || null,
+        source_video_url,
+        ossUrl,
+        ossPath,
+        cost_usd || null,
+        cost_cny || null
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      data: {
+        task: rows[0],
+        ossUploaded: !!ossUrl,
+        ossError: ossError
+      },
+      message: ossUrl ? '视频已保存到 OSS' : '任务已记录（OSS 未上传）'
+    });
+  } catch (error) {
+    console.error('保存视频失败:', error.message);
+    return next(error);
   }
 });
 

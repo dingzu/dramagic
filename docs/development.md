@@ -125,6 +125,20 @@ dramagic/
 - 可配置汇率（默认 7.25）
 - 自动换算功能
 
+### 7. 阿里云 OSS 存储
+视频文件云存储服务：
+- 支持从 URL 下载视频并上传到 OSS
+- 自动按日期组织文件目录（videos/YYYY/MM/DD/）
+- 支持自定义域名访问
+- 提供签名 URL（用于私有 Bucket）
+
+### 8. 视频生成历史
+生成任务管理和历史记录：
+- 视频生成完成后自动保存到 OSS
+- 记录生成条件（prompt、时长、来源、费用）
+- 右侧历史抽屉查看所有生成记录
+- 支持按项目筛选历史任务
+
 ---
 
 ## 数据库设计
@@ -137,6 +151,26 @@ dramagic/
 | canvas_state | JSONB | 画布状态 |
 | created_at | TIMESTAMP | 创建时间 |
 | updated_at | TIMESTAMP | 更新时间 |
+
+### video_tasks 表
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | SERIAL | 主键 |
+| user_id | TEXT | 用户 ID（默认 admin） |
+| project_id | BIGINT | 关联项目 ID |
+| prompt | TEXT | 生成描述词 |
+| duration | INTEGER | 视频时长（秒） |
+| source | TEXT | 来源（fal/comfly-premium/comfly-original） |
+| source_task_id | TEXT | 源平台任务 ID |
+| source_video_url | TEXT | 源平台视频 URL |
+| oss_url | TEXT | 阿里云 OSS URL |
+| oss_path | TEXT | OSS 文件路径 |
+| status | TEXT | 状态（pending/completed/failed） |
+| error | TEXT | 错误信息 |
+| cost_usd | NUMERIC | 费用（美元） |
+| cost_cny | NUMERIC | 费用（人民币） |
+| created_at | TIMESTAMP | 创建时间 |
+| completed_at | TIMESTAMP | 完成时间 |
 
 ---
 
@@ -164,6 +198,20 @@ dramagic/
 - `GET /api/v1/ai/comfly/sora-2/generations/:taskId` - Comfly 查询状态
 - `POST /api/v1/ai/fal/sora-2/text-to-video` - fal.ai 创建任务
 - `GET /api/v1/ai/fal/sora-2/text-to-video/:requestId` - fal.ai 查询状态
+
+### OSS 存储
+- `GET /api/v1/oss/status` - 获取 OSS 状态
+- `POST /api/v1/oss/upload-from-url` - 从 URL 上传视频到 OSS
+- `DELETE /api/v1/oss/files/:ossPath` - 删除 OSS 文件
+- `GET /api/v1/oss/signed-url` - 获取签名 URL
+- `GET /api/v1/oss/files` - 列出 OSS 文件
+
+### 视频任务
+- `GET /api/v1/video-tasks` - 获取任务列表
+- `GET /api/v1/video-tasks/:id` - 获取单个任务
+- `POST /api/v1/video-tasks` - 创建任务记录
+- `PUT /api/v1/video-tasks/:id` - 更新任务
+- `POST /api/v1/video-tasks/save-video` - 保存视频（上传 OSS + 记录任务）
 
 ---
 
@@ -196,6 +244,13 @@ COMFLY_API_KEY_ORIGINAL=sk-xxx # Original版
 
 # fal.ai
 FAL_KEY=xxx:xxx
+
+# 阿里云 OSS
+OSS_REGION=oss-cn-shanghai
+OSS_ACCESS_KEY_ID=your_access_key_id
+OSS_ACCESS_KEY_SECRET=your_access_key_secret
+OSS_BUCKET=your_bucket_name
+# OSS_CUSTOM_DOMAIN=cdn.yourdomain.com  # 可选
 ```
 
 ---

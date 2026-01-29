@@ -5,6 +5,7 @@ import Login from './components/Login.vue'
 import Sidebar from './components/Sidebar.vue'
 import Canvas from './components/Canvas.vue'
 import Playground from './components/Playground.vue'
+import HistoryDrawer from './components/HistoryDrawer.vue'
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
@@ -14,6 +15,7 @@ const canvasRef = ref(null)
 const currentProject = ref(null)
 const creatingProject = ref(false)
 const onlineUsers = ref(0)
+const showHistoryDrawer = ref(false)
 
 let autosaveTimer = null
 let backendSaveTimer = null
@@ -357,6 +359,12 @@ watch(currentProject, (newVal, oldVal) => {
         >
           Playground
         </button>
+        <button 
+          class="nav-item history-btn"
+          @click="showHistoryDrawer = true"
+        >
+          📋 历史
+        </button>
         <div v-if="onlineUsers > 0 && currentProject?.id" class="online-users">
           <span class="online-dot"></span>
           <span class="online-count">{{ onlineUsers }} 人在线</span>
@@ -391,6 +399,13 @@ watch(currentProject, (newVal, oldVal) => {
       </template>
       <Playground v-else />
     </div>
+
+    <!-- 历史任务抽屉 -->
+    <HistoryDrawer 
+      :show="showHistoryDrawer"
+      :project-id="currentProject?.id"
+      @close="showHistoryDrawer = false"
+    />
   </div>
 </template>
 
@@ -453,6 +468,15 @@ watch(currentProject, (newVal, oldVal) => {
 .nav-item.active {
   background: #3b82f6;
   color: white;
+}
+
+.nav-item.history-btn {
+  color: #6366f1;
+}
+
+.nav-item.history-btn:hover {
+  background: #eef2ff;
+  color: #4f46e5;
 }
 
 .nav-item.logout-btn {
